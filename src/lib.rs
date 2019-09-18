@@ -33,9 +33,8 @@ pub mod libgpio {
 		consumer: [u8; 32],
 	}
 
-	const GPIOHANDLES_MAX: usize = 32;
+	const GPIOHANDLES_MAX: usize = 64;
 
-	#[derive(Debug, Default)]
 	#[repr(C)]
 	pub struct GpioHandleRequest {
 		line_offsets: [u32; GPIOHANDLES_MAX],
@@ -44,6 +43,19 @@ pub mod libgpio {
 		consumer_label: [u8; 32],
 		lines: u32,
 		fd: i32,
+	}
+
+	impl Default for GpioHandleRequest {
+		fn default() -> Self {
+			Self {
+				line_offsets: [0; GPIOHANDLES_MAX],
+				flags: 0,
+				default_values: [0; GPIOHANDLES_MAX],
+				consumer_label: [0;32],
+				lines: 0,
+				fd: 0,
+			}
+		}
 	}
 
 	#[derive(Debug, Default)]
@@ -56,10 +68,17 @@ pub mod libgpio {
 		fd: i32,
 	}
 
-	#[derive(Debug, Default)]
 	#[repr(C)]
 	pub struct GpioHandleData {
 		values: [u8; GPIOHANDLES_MAX],
+	}
+
+	impl Default for GpioHandleData {
+    	fn default() -> Self {
+			Self {
+				values: [0;GPIOHANDLES_MAX],
+			}
+		}
 	}
 
 	/* ***************** Defines for ioctl **************** */
@@ -283,15 +302,17 @@ pub mod libgpio {
 			
 			gpio_handle_request.flags |= GPIOHANDLE_REQUEST_INPUT;
 
+			println!("Request input offset {} with flags {}",gpio_handle_request.line_offsets[0],gpio_handle_request.flags);
+
 			unsafe {
-				GpioChip::gpio_get_line_handle(self.fd.as_raw_fd(),&mut gpio_handle_request).unwrap();
+				GpioChip::gpio_get_line_handle(self.fd.as_raw_fd(), &mut gpio_handle_request).unwrap();
 			}
 
 			self.lines.insert(line_offset, gpio_handle_request.fd);
 		}
 
-		pub fn get_line_value(&self, line_offset: &u32) -> u8{
-			let line_fd = self.lines.get(line_offset).unwrap();
+		pub fn get_line_value(&self, line_offset: u32) -> u8{
+			let line_fd = self.lines.get(&line_offset).unwrap();
 
 			let mut data = GpioHandleData::default();
 
