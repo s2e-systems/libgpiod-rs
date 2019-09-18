@@ -1,5 +1,5 @@
 [package]
-name = "libgpio-rs"
+name = "libgpio"
 version = "0.1.0"
 authors = ["Joao Rebelo <2730147+jrebelo@users.noreply.github.com>"]
 edition = "2018"
