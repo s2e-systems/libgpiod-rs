@@ -111,7 +111,7 @@ pub mod libgpio {
 		label: String,
 		num_lines: u32,
 		fd: File,
-		lines: HashMap<u32, i32>,
+		lines: HashMap<Vec<u32>, i32>,
 	}
 
 	pub enum LineDirection {
@@ -290,29 +290,33 @@ pub mod libgpio {
 				GpioChip::gpio_get_line_handle(self.fd.as_raw_fd(),&mut gpio_handle_request).unwrap();
 			}
 
-			self.lines.insert(line_offset, gpio_handle_request.fd);
+			self.lines.insert(vec!(line_offset), gpio_handle_request.fd);
 		}
 
 		pub fn request_line_values_input(&mut self, line_offset: u32) {
+			self.request_multiple_line_values_input(&vec![line_offset]);
+		}
+
+		pub fn request_multiple_line_values_input(&mut self, line_offsets: &Vec<u32>) {
 			let mut gpio_handle_request = GpioHandleRequest::default();
 			
-			/* TODO: Request multiple lines simultaneously */
-			gpio_handle_request.line_offsets[0] = line_offset;
-			gpio_handle_request.lines = 1;
+			for index in 0 .. line_offsets.len() {
+				gpio_handle_request.line_offsets[index] = line_offsets[index];
+			}
+
+			gpio_handle_request.lines = line_offsets.len() as u32;
 			
 			gpio_handle_request.flags |= GPIOHANDLE_REQUEST_INPUT;
-
-			println!("Request input offset {} with flags {}",gpio_handle_request.line_offsets[0],gpio_handle_request.flags);
 
 			unsafe {
 				GpioChip::gpio_get_line_handle(self.fd.as_raw_fd(), &mut gpio_handle_request).unwrap();
 			}
 
-			self.lines.insert(line_offset, gpio_handle_request.fd);
+			self.lines.insert(line_offsets.clone(), gpio_handle_request.fd);
 		}
 
-		pub fn get_line_value(&self, line_offset: u32) -> u8{
-			let line_fd = self.lines.get(&line_offset).unwrap();
+		pub fn get_line_value(&self, line_offset: &Vec<u32>) -> Vec<u8>{
+			let line_fd = self.lines.get(line_offset).unwrap();
 
 			let mut data = GpioHandleData::default();
 
@@ -320,10 +324,16 @@ pub mod libgpio {
 				GpioChip::gpio_get_line_values(*line_fd, &mut data).unwrap();
 			}
 
-			data.values[0]
+			let mut output_data : Vec<u8> = Vec::with_capacity(line_offset.len());
+
+			for index in 0..line_offset.len() {
+				output_data.push(data.values[index]);
+			}
+
+			output_data
 		}
 
-		pub fn set_line_value(&self, line_offset: &u32, value: u8) -> io::Result<()>{
+		pub fn set_line_value(&self, line_offset: &Vec<u32>, value: u8) -> io::Result<()>{
 			let line_fd = self.lines.get(line_offset).unwrap();
 
 			let mut data = GpioHandleData::default();

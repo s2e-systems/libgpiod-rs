@@ -3,15 +3,25 @@ use libgpio::libgpio::GpioChip;
 use std::env;
 use std::path::Path;
 
-fn main() {
+fn main()  -> Result<(), &'static str> {
     let args: Vec<String> = env::args().collect();
 
+    if args.len() < 3 {
+        return Err("Too few arguments. Usage <gpiochip path> [offset1] [offset2] ... ");
+    }
+
     let gpiodev = &args[1];
-    let offset : u32 = args[2].parse().unwrap();;
+
+    let offset : Vec<u32> = args.iter().enumerate()
+        .filter(|&(i, _)| i >= 2)
+        .map(|(_,x)| x.parse().unwrap())
+        .collect();
 
     let mut gpiochip = GpioChip::new(Path::new(gpiodev)).unwrap();
 
-    gpiochip.request_line_values_input(offset);
+    gpiochip.request_multiple_line_values_input(&offset);
 
-    println!("GPIO get {} offset {}. Value {}", gpiodev, offset,gpiochip.get_line_value(offset));
+    println!("GPIO get {} offset {:?}. Values {:?}", gpiodev, offset, gpiochip.get_line_value(&offset));
+
+    Ok(())
 }
