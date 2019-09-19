@@ -1,9 +1,11 @@
 //! Crate for interfacing with Linux GPIO chardev module
 //! 
-//! This crate contains object to easily interface with the Linux GPIO using the chardev module.
-//! This interface involves calling *ioctl* funcions which are unsafe and required some variable
+//! This crate provides an interface to the Linux GPIO using the chardev module.
+//! This interface involves calling *ioctl* funcions which are unsafe and require some unintuitive variable
 //! mapping. To ease this process, this crate provides a GpioChip struct which encapsulates the 
 //! interface in safe Rust functions. The functionality provided here is highly inspired by libgpiod.
+//! 
+//! Since all functionality is dependent on Linux function calls, this crate only compiles for Linux systems.
 #[macro_use]
 extern crate nix;
 
