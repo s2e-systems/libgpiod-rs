@@ -1,6 +1,6 @@
 use std::fs;
 use std::env;
-use libgpio::libgpio::GpioChip;
+use libgpio::GpioChip;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -19,7 +19,7 @@ fn main() {
             let gpiochip = &gpiochips[index];
             println!("{}", gpiochip);
             for line_index in 0..*gpiochip.num_lines() {
-                let line_info = gpiochip.get_line_info(line_index).unwrap();
+                let line_info = gpiochip.get_line_info(&line_index).unwrap();
                 println!("Line offset {}", line_index);
                 println!("{}", line_info);
             }

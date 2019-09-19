@@ -1,6 +1,6 @@
 use std::env;
 use std::path::Path;
-use libgpio::libgpio::GpioChip;
+use libgpio::GpioChip;
 
 fn main()  -> Result<(), &'static str> {
     let args: Vec<String> = env::args().collect();

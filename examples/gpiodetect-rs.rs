@@ -1,5 +1,5 @@
 use std::fs;
-use libgpio::libgpio::GpioChip;
+use libgpio::GpioChip;
 
 fn main() {
     let dev_files = fs::read_dir("/dev/").unwrap();
