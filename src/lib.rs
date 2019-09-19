@@ -2,6 +2,7 @@
 extern crate nix;
 
 pub mod libgpio {
+	use std::fmt;
 	use std::collections::HashMap;
 	use std::io;
 	use std::io::{Error, ErrorKind};
@@ -114,9 +115,24 @@ pub mod libgpio {
 		lines: HashMap<Vec<u32>, i32>,
 	}
 
+	impl fmt::Display for GpioChip {
+		fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+			write!(f, "{} [{}] ({} lines)", self.name, self.label, self.num_lines)
+		}
+	}
+
 	pub enum LineDirection {
 		Input,
 		Output,
+	}
+
+	impl fmt::Display for LineDirection {
+		fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+			match self {
+				LineDirection::Input => write!(f, "Input"),
+				LineDirection::Output => write!(f, "Output"), 
+			}
+		}
 	}
 
 	pub enum LineActiveState {
@@ -124,9 +140,27 @@ pub mod libgpio {
 		ActiveHigh,
 	}
 
+	impl fmt::Display for LineActiveState {
+		fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+			match self {
+				LineActiveState::ActiveLow => write!(f, "Active low"),
+				LineActiveState::ActiveHigh => write!(f, "Active high"), 
+			}
+		}
+	}
+
 	pub enum OutputMode {
 		OpenDrain,
 		OpenSource,
+	}
+
+	impl fmt::Display for OutputMode {
+		fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+			match self {
+				OutputMode::OpenDrain => write!(f, "Open drain"),
+				OutputMode::OpenSource => write!(f, "Open source"), 
+			}
+		}
 	}
 
 	pub struct GpioLine {
@@ -135,6 +169,12 @@ pub mod libgpio {
 		used: bool,
 		open_drain: bool,
 		open_source: bool,
+	}
+
+	impl fmt::Display for GpioLine {
+		fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+			write!(f, "{} {} {} {} {}", self.direction, self.active_state, self.used, self.open_drain, self.open_source)
+		}
 	}
 
 	impl GpioLine {

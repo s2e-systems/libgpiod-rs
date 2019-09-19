@@ -11,5 +11,5 @@ fn main() {
             .collect();
     
     gpiochips.iter().rev() //Do it in reverse order because the numbers of the GPIO chips go from high to low
-        .for_each(|f| println!("{} [{}] ({} lines)",f.name(),f.label(),f.num_lines()));
+        .for_each(|f| println!("{}",f));
 }
