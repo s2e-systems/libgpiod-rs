@@ -299,7 +299,7 @@ pub mod libgpio {
 			})
 		}
 
-		pub fn request_line_values_output(&mut self, line_offset: &Vec<u32>, output_mode: OutputMode, active_low: bool) {
+		pub fn request_line_values_output(&mut self, line_offset: &Vec<u32>, output_mode: OutputMode, active_low: bool) -> io::Result<()> {
 			let mut gpio_handle_request = GpioHandleRequest::default();
 
 			gpio_handle_request.lines = line_offset.len() as u32;
@@ -323,9 +323,11 @@ pub mod libgpio {
 			}
 
 			self.lines.insert(line_offset.clone(), gpio_handle_request.fd);
+
+			Ok(())
 		}
 
-		pub fn request_line_values_input(&mut self, line_offset: &Vec<u32>) {
+		pub fn request_line_values_input(&mut self, line_offset: &Vec<u32>) -> io::Result<()> {
 			let mut gpio_handle_request = GpioHandleRequest::default();
 			
 			for index in 0 .. line_offset.len() {
@@ -341,6 +343,8 @@ pub mod libgpio {
 			}
 
 			self.lines.insert(line_offset.clone(), gpio_handle_request.fd);
+
+			Ok(())
 		}
 
 		pub fn get_line_value(&self, line_offset: &Vec<u32>) -> Vec<u8>{

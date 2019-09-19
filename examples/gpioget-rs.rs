@@ -18,7 +18,7 @@ fn main()  -> Result<(), &'static str> {
 
     let mut gpiochip = GpioChip::new(Path::new(gpiodev)).unwrap();
 
-    gpiochip.request_line_values_input(&offset);
+    gpiochip.request_line_values_input(&offset).unwrap();
 
     println!("GPIO get {} offset {:?}. Values {:?}", gpiodev, offset, gpiochip.get_line_value(&offset));
 
