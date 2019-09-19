@@ -137,6 +137,28 @@ pub mod libgpio {
 		open_source: bool,
 	}
 
+	impl GpioLine {
+		pub fn direction(&self) -> &LineDirection {
+			&self.direction
+		}
+
+		pub fn active_state(&self) -> &LineActiveState {
+			&self.active_state
+		}
+
+		pub fn is_used(&self) -> &bool {
+			&self.used
+		}
+
+		pub fn is_open_drain(&self) -> &bool {
+			&self.open_drain
+		}
+
+		pub fn is_open_source(&self) -> &bool {
+			&self.open_source
+		}
+	}
+
 	impl GpioChip {
 		ioctl_read!(gpio_get_chip_info, GPIO_MAGIC_NUMBER, GPIO_GET_CHIPINFO_IOCTL_COMMAND_NUMBER, GpioChipInfo);
 		ioctl_readwrite!(gpio_get_line_info, GPIO_MAGIC_NUMBER, GPIO_GET_LINEINFO_IOCTL_COMMAND_NUMBER, GpioLineInfo);
@@ -156,15 +178,12 @@ pub mod libgpio {
 				GpioChip::gpio_get_chip_info(dev_file.as_raw_fd(), &mut gpio_chip_info).unwrap();
 			}
 
-			Ok (GpioChip{ name: String::from_utf8(gpio_chip_info.name.to_vec()).unwrap(),
-					label: String::from_utf8(gpio_chip_info.label.to_vec()).unwrap(),
+			Ok (GpioChip{
+					name: String::from_utf8(gpio_chip_info.name.to_vec()).unwrap().trim_end_matches(char::from(0)).to_string(),
+					label: String::from_utf8(gpio_chip_info.label.to_vec()).unwrap().trim_end_matches(char::from(0)).to_string(),
 					num_lines: gpio_chip_info.lines,
 					fd: dev_file,
 					lines: HashMap::new() })
-		}
-
-		pub fn new_by_name(gpio_name: &str) -> io::Result<GpioChip> {
-			GpioChip::new(Path::new(&format!{"/dev/{}",gpio_name}))
 		}
 
 		fn is_gpiochip_cdev(path: &Path) -> io::Result<bool>{
@@ -215,8 +234,6 @@ pub mod libgpio {
 				GpioChip::gpio_get_line_info(self.fd.as_raw_fd(), &mut gpio_line_info).unwrap();
 			}
 
-			println!("Line name: {:?} consumer {:?} flags {} ", gpio_line_info.name, gpio_line_info.consumer, gpio_line_info.flags );
-
 			let direction = if gpio_line_info.flags & GPIOLINE_FLAG_IS_OUT == 1 {
 				LineDirection::Output
 			} else {
@@ -242,13 +259,12 @@ pub mod libgpio {
 			})
 		}
 
-		pub fn request_multiple_line_values_output(&mut self, line_offset: &Vec<u32>, output_mode: OutputMode, active_low: bool) {
+		pub fn request_line_values_output(&mut self, line_offset: &Vec<u32>, output_mode: OutputMode, active_low: bool) {
 			let mut gpio_handle_request = GpioHandleRequest::default();
 
 			gpio_handle_request.lines = line_offset.len() as u32;
 
-			// TODO: Find a more elegant way to do this
-			for index in 0..gpio_handle_request.lines as usize {
+			for index in 0..line_offset.len() {
 				gpio_handle_request.line_offsets[index] = line_offset[index];
 			}
 			
@@ -266,45 +282,17 @@ pub mod libgpio {
 				GpioChip::gpio_get_line_handle(self.fd.as_raw_fd(),&mut gpio_handle_request).unwrap();
 			}
 
-			//self.lines.insert(line_offset, gpio_handle_request.fd);
+			self.lines.insert(line_offset.clone(), gpio_handle_request.fd);
 		}
 
-		pub fn request_line_values_output(&mut self, line_offset: u32, output_mode: OutputMode, active_low: bool) {
+		pub fn request_line_values_input(&mut self, line_offset: &Vec<u32>) {
 			let mut gpio_handle_request = GpioHandleRequest::default();
 			
-			/* TODO: Request multiple lines simultaneously */
-			gpio_handle_request.line_offsets[0] = line_offset;
-			gpio_handle_request.lines = 1;
-			
-			gpio_handle_request.flags |= GPIOHANDLE_REQUEST_OUTPUT;
-			match output_mode {
-				OutputMode::OpenDrain => gpio_handle_request.flags |= GPIOHANDLE_REQUEST_OPEN_DRAIN,
-				OutputMode::OpenSource => gpio_handle_request.flags |= GPIOHANDLE_REQUEST_OPEN_SOURCE,
-			};
-
-			if active_low {
-				gpio_handle_request.flags |= GPIOHANDLE_REQUEST_ACTIVE_LOW;
+			for index in 0 .. line_offset.len() {
+				gpio_handle_request.line_offsets[index] = line_offset[index];
 			}
 
-			unsafe {
-				GpioChip::gpio_get_line_handle(self.fd.as_raw_fd(),&mut gpio_handle_request).unwrap();
-			}
-
-			self.lines.insert(vec!(line_offset), gpio_handle_request.fd);
-		}
-
-		pub fn request_line_values_input(&mut self, line_offset: u32) {
-			self.request_multiple_line_values_input(&vec![line_offset]);
-		}
-
-		pub fn request_multiple_line_values_input(&mut self, line_offsets: &Vec<u32>) {
-			let mut gpio_handle_request = GpioHandleRequest::default();
-			
-			for index in 0 .. line_offsets.len() {
-				gpio_handle_request.line_offsets[index] = line_offsets[index];
-			}
-
-			gpio_handle_request.lines = line_offsets.len() as u32;
+			gpio_handle_request.lines = line_offset.len() as u32;
 			
 			gpio_handle_request.flags |= GPIOHANDLE_REQUEST_INPUT;
 
@@ -312,7 +300,7 @@ pub mod libgpio {
 				GpioChip::gpio_get_line_handle(self.fd.as_raw_fd(), &mut gpio_handle_request).unwrap();
 			}
 
-			self.lines.insert(line_offsets.clone(), gpio_handle_request.fd);
+			self.lines.insert(line_offset.clone(), gpio_handle_request.fd);
 		}
 
 		pub fn get_line_value(&self, line_offset: &Vec<u32>) -> Vec<u8>{
@@ -357,6 +345,5 @@ pub mod libgpio {
 		pub fn num_lines(&self) -> &u32 {
 			&self.num_lines
 		}
-
 	}
 }
