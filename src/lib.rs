@@ -35,7 +35,6 @@ fn convert_nix_to_io_result(result: nix::Result<i32>) -> io::Result<i32>{
 }
 
 mod gpio_ioctl {
-
 	// All the structs used for ioctl must be represented in C otherwise weird memory mappings happen.
 	//
 	// The implementations provided inside this module are also a copy of gpio.h which is normally
@@ -205,6 +204,8 @@ pub struct GpioLineInfo {
 	used: bool,
 	open_drain: bool,
 	open_source: bool,
+	name: String,
+	consumer: String,
 }
 
 pub struct GpioLineValue {
@@ -265,7 +266,7 @@ impl GpioLineValue {
 
 impl fmt::Display for GpioLineInfo {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "{} {} {} {} {}", self.direction, self.active_state, self.used, self.open_drain, self.open_source)
+		write!(f, "{} {} {} {} {} {} {}", self.direction, self.active_state, self.used, self.open_drain, self.open_source, self.name, self.consumer)
 	}
 }
 
@@ -288,6 +289,14 @@ impl GpioLineInfo {
 
 	pub fn is_open_source(&self) -> &bool {
 		&self.open_source
+	}
+
+	pub fn name(&self) -> &str {
+		&self.name
+	}
+
+	pub fn consumer(&self) -> &str {
+		&self.consumer
 	}
 }
 
@@ -376,13 +385,17 @@ impl GpioChip {
 		let used = gpio_line_info.flags & GPIOLINE_FLAG_KERNEL == 1;
 		let open_drain = gpio_line_info.flags & GPIOLINE_FLAG_OPEN_DRAIN == 1; 
 		let open_source = gpio_line_info.flags & GPIOLINE_FLAG_OPEN_SOURCE == 1;
+		let name = String::from_utf8(gpio_line_info.name.to_vec()).unwrap().trim_end_matches(char::from(0)).to_string();
+		let consumer = String::from_utf8(gpio_line_info.consumer.to_vec()).unwrap().trim_end_matches(char::from(0)).to_string();
 		
 		Ok(GpioLineInfo{
 			direction,
 			active_state,
 			used,
 			open_drain,
-			open_source
+			open_source,
+			name,
+			consumer,
 		})
 	}
 
