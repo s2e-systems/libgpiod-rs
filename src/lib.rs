@@ -10,7 +10,6 @@
 extern crate nix;
 
 use std::fmt;
-use std::collections::HashMap;
 use std::io;
 use std::io::{Error, ErrorKind};
 use std::fs::File;
@@ -19,10 +18,24 @@ use std::fs::OpenOptions;
 use std::fs::symlink_metadata;
 use std::os::unix::fs::{MetadataExt, FileTypeExt};
 use std::path::Path;
-use std::rc::Rc;
 use std::os::unix::prelude::*;
 
+fn convert_nix_to_io_result(result: nix::Result<i32>) -> io::Result<i32>{
+	match result {
+		Err(e) => {	
+			match e {
+				nix::Error::Sys(errno) => return Err(io::Error::from(errno)),
+				nix::Error::InvalidPath => return Err(io::Error::from(io::ErrorKind::InvalidInput)),
+				nix::Error::InvalidUtf8 => return Err(io::Error::from(io::ErrorKind::InvalidData)),
+				nix::Error::UnsupportedOperation => return Err(io::Error::from(io::ErrorKind::Other))
+			}
+		},
+		Ok(v) => return Ok(v),
+	}
+}
+
 mod gpio_ioctl {
+
 	// All the structs used for ioctl must be represented in C otherwise weird memory mappings happen.
 	//
 	// The implementations provided inside this module are also a copy of gpio.h which is normally
@@ -107,6 +120,7 @@ mod gpio_ioctl {
 	ioctl_readwrite!(gpio_get_line_event, GPIO_MAGIC_NUMBER, GPIO_GET_LINEEVENT_IOCTL_COMMAND_NUMBER, GpioEventRequest);
 	ioctl_readwrite!(gpio_get_line_values, GPIO_MAGIC_NUMBER, GPIO_GET_LINE_VALUES_IOCTL_COMMAND_NUMBER, GpioHandleData);
 	ioctl_readwrite!(gpio_set_line_values, GPIO_MAGIC_NUMBER, GPIO_SET_LINE_VALUES_IOCTL_COMMAND_NUMBER, GpioHandleData);
+
 }
 
 // **************** Flags for line state **************
@@ -193,13 +207,14 @@ pub struct GpioLineInfo {
 	open_source: bool,
 }
 
-pub struct GpioLine {
+pub struct GpioLineValue {
 	parent_chip_name: String,
+	direction: LineDirection,
 	offset: Vec<u32>,
 	fd: i32,
 }
 
-impl GpioLine {
+impl GpioLineValue {
 	/// Get the value of GPIO lines. The values can only be read if the lines have previously been
 	/// requested as either inputs, using the *request_line_values_input* method, or outputs using 
 	/// the *request_line_values_output*. The input vector in both the *request* and get functions
@@ -209,7 +224,7 @@ impl GpioLine {
 		let mut data = gpio_ioctl::GpioHandleData::default();
 
 		unsafe {
-			gpio_ioctl::gpio_get_line_values(self.fd, &mut data).unwrap();
+			convert_nix_to_io_result(gpio_ioctl::gpio_get_line_values(self.fd, &mut data))?;
 		}
 
 		let mut output_data : Vec<u8> = Vec::with_capacity(self.offset.len());
@@ -233,10 +248,18 @@ impl GpioLine {
 		}
 
 		unsafe {
-			gpio_ioctl::gpio_set_line_values(self.fd, &mut data).unwrap();
+			convert_nix_to_io_result(gpio_ioctl::gpio_set_line_values(self.fd, &mut data))?;
 		}
 
 		Ok(())
+	}
+
+	pub fn parent_chip_name(&self) -> &str {
+		&self.parent_chip_name
+	}
+
+	pub fn direction(&self) -> &LineDirection {
+		&self.direction
 	}
 }
 
@@ -279,7 +302,7 @@ impl GpioChip {
 		let mut gpio_chip_info = gpio_ioctl::GpioChipInfo::default();
 
 		unsafe { 
-			gpio_ioctl::gpio_get_chip_info(dev_file.as_raw_fd(), &mut gpio_chip_info).unwrap();
+			convert_nix_to_io_result(gpio_ioctl::gpio_get_chip_info(dev_file.as_raw_fd(), &mut gpio_chip_info))?;
 		}
 
 		Ok (GpioChip{
@@ -335,7 +358,7 @@ impl GpioChip {
 		gpio_line_info.line_offset = *line_number;
 
 		unsafe { 
-			gpio_ioctl::gpio_get_line_info(self.fd.as_raw_fd(), &mut gpio_line_info).unwrap();
+			convert_nix_to_io_result(gpio_ioctl::gpio_get_line_info(self.fd.as_raw_fd(), &mut gpio_line_info))?;
 		}
 
 		let direction = if gpio_line_info.flags & GPIOLINE_FLAG_IS_OUT == 1 {
@@ -367,7 +390,7 @@ impl GpioChip {
 	/// operation is a precondition to being able to set the state of the GPIO lines. All the lines
 	/// passed in one request must share the output mode and the active state. The state of lines configured
 	/// as outputs can also be read using the *get_line_value* method.
-	pub fn request_line_values_output(&mut self, line_offset: &Vec<u32>, output_mode: OutputMode, active_low: bool) -> io::Result<GpioLine> {
+	pub fn request_line_values_output(&mut self, line_offset: &Vec<u32>, output_mode: OutputMode, active_low: bool) -> io::Result<GpioLineValue> {
 		let mut gpio_handle_request = gpio_ioctl::GpioHandleRequest::default();
 
 		gpio_handle_request.lines = line_offset.len() as u32;
@@ -387,18 +410,19 @@ impl GpioChip {
 		}
 
 		unsafe {
-			gpio_ioctl::gpio_get_line_handle(self.fd.as_raw_fd(),&mut gpio_handle_request).unwrap();
+			convert_nix_to_io_result(gpio_ioctl::gpio_get_line_handle(self.fd.as_raw_fd(),&mut gpio_handle_request))?;
 		}
 
-		Ok(GpioLine {
+		Ok(GpioLineValue {
 				parent_chip_name: self.name.clone(),
+				direction: LineDirection::Output,
 				offset: line_offset.clone(),
 				fd: gpio_handle_request.fd,	})
 	}
 
 	/// Request the GPIO chip to configure the lines passed as argument as inputs. Calling this
 	/// operation is a precondition to being able to read the state of the GPIO lines.
-	pub fn request_line_values_input(&mut self, line_offset: &Vec<u32>) -> io::Result<GpioLine> {
+	pub fn request_line_values_input(&mut self, line_offset: &Vec<u32>) -> io::Result<GpioLineValue> {
 		let mut gpio_handle_request = gpio_ioctl::GpioHandleRequest::default();
 		
 		for index in 0 .. line_offset.len() {
@@ -410,11 +434,12 @@ impl GpioChip {
 		gpio_handle_request.flags |= GPIOHANDLE_REQUEST_INPUT;
 
 		unsafe {
-			gpio_ioctl::gpio_get_line_handle(self.fd.as_raw_fd(), &mut gpio_handle_request).unwrap();
+			convert_nix_to_io_result(gpio_ioctl::gpio_get_line_handle(self.fd.as_raw_fd(), &mut gpio_handle_request))?;
 		}
 
-		Ok(GpioLine{
+		Ok(GpioLineValue{
 				parent_chip_name: self.name.clone(),
+				direction: LineDirection::Input,
 				offset: line_offset.clone(),
 				fd: gpio_handle_request.fd })
 	}
