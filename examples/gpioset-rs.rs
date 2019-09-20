@@ -19,7 +19,7 @@ fn main()  -> Result<(), &'static str> {
         .map(|(_,x)| x.parse().unwrap())
         .collect();
 
-    let mut gpiochip = GpioChip::new(Path::new(gpiodev)).unwrap();
+    let mut gpiochip = GpioChip::new(&Path::new(gpiodev)).unwrap();
 
     let line = gpiochip.request_line_values_input(&offset).unwrap();
 

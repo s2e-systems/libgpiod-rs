@@ -271,7 +271,7 @@ impl GpioLineInfo {
 impl GpioChip {
 
 	/// Create a new GPIO chip interface.
-	pub fn new(path: &Path) -> io::Result<GpioChip> {
+	pub fn new(path: &dyn AsRef<Path>) -> io::Result<GpioChip> {
 		let dev_file = OpenOptions::new().read(true).write(true).open(path)?;
 
 		GpioChip::is_gpiochip_cdev(path)?;
@@ -289,7 +289,7 @@ impl GpioChip {
 				fd: dev_file,})
 	}
 
-	fn is_gpiochip_cdev(path: &Path) -> io::Result<bool>{
+	fn is_gpiochip_cdev(path: &dyn AsRef<Path>) -> io::Result<bool>{
 		const LINE_FEED : u8 = 10;
 
 		/*rv = lstat(path, &statbuf);*/
@@ -301,7 +301,7 @@ impl GpioChip {
 		}
 
 		/*basename(pathcpy);*/
-		let basename = path.file_name().unwrap(); 
+		let basename = path.as_ref().file_name().unwrap(); 
 
 		let sysfs = format!{"/sys/bus/gpio/devices/{}/dev", basename.to_str().unwrap()};
 
