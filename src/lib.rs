@@ -19,6 +19,7 @@ use std::fs::OpenOptions;
 use std::fs::symlink_metadata;
 use std::os::unix::fs::{MetadataExt, FileTypeExt};
 use std::path::Path;
+use std::rc::Rc;
 use std::os::unix::prelude::*;
 
 mod gpio_ioctl {
@@ -130,7 +131,6 @@ pub struct GpioChip {
 	label: String,
 	num_lines: u32,
 	fd: File,
-	lines: HashMap<Vec<u32>, i32>,
 }
 
 impl fmt::Display for GpioChip {
@@ -185,7 +185,7 @@ impl fmt::Display for OutputMode {
 }
 
 /// Represents the information of a specific GPIO line. Can only be obtained through the GpioChip interface.
-pub struct GpioLine {
+pub struct GpioLineInfo {
 	direction: LineDirection,
 	active_state: LineActiveState,
 	used: bool,
@@ -193,13 +193,60 @@ pub struct GpioLine {
 	open_source: bool,
 }
 
-impl fmt::Display for GpioLine {
+pub struct GpioLine {
+	parent_chip_name: String,
+	offset: Vec<u32>,
+	fd: i32,
+}
+
+impl GpioLine {
+	/// Get the value of GPIO lines. The values can only be read if the lines have previously been
+	/// requested as either inputs, using the *request_line_values_input* method, or outputs using 
+	/// the *request_line_values_output*. The input vector in both the *request* and get functions
+	/// must match exactly, otherwise the correct file descriptor needed to access the
+	/// lines can not be retrieved and the function will fail.
+	pub fn get_line_value(&self) -> io::Result<Vec<u8>>{
+		let mut data = gpio_ioctl::GpioHandleData::default();
+
+		unsafe {
+			gpio_ioctl::gpio_get_line_values(self.fd, &mut data).unwrap();
+		}
+
+		let mut output_data : Vec<u8> = Vec::with_capacity(self.offset.len());
+
+		for index in 0..self.offset.len() {
+			output_data.push(data.values[index]);
+		}
+
+		Ok(output_data)
+	}
+
+	/// Set the value of GPIO lines. The value can only be set if the lines have previously been
+	/// requested as outputs using the *request_line_values_output*. The input vector in both
+	/// functions must match exactly, otherwise the correct file descriptor needed to access the
+	/// lines can not be retrieved and the function will fail.
+	pub fn set_line_value(&self, value: u8) -> io::Result<()>{
+		let mut data = gpio_ioctl::GpioHandleData::default();
+
+		for line_index in 0..self.offset.len() {
+				data.values[line_index] = value;
+		}
+
+		unsafe {
+			gpio_ioctl::gpio_set_line_values(self.fd, &mut data).unwrap();
+		}
+
+		Ok(())
+	}
+}
+
+impl fmt::Display for GpioLineInfo {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		write!(f, "{} {} {} {} {}", self.direction, self.active_state, self.used, self.open_drain, self.open_source)
 	}
 }
 
-impl GpioLine {
+impl GpioLineInfo {
 	pub fn direction(&self) -> &LineDirection {
 		&self.direction
 	}
@@ -239,8 +286,7 @@ impl GpioChip {
 				name: String::from_utf8(gpio_chip_info.name.to_vec()).unwrap().trim_end_matches(char::from(0)).to_string(),
 				label: String::from_utf8(gpio_chip_info.label.to_vec()).unwrap().trim_end_matches(char::from(0)).to_string(),
 				num_lines: gpio_chip_info.lines,
-				fd: dev_file,
-				lines: HashMap::new() })
+				fd: dev_file,})
 	}
 
 	fn is_gpiochip_cdev(path: &Path) -> io::Result<bool>{
@@ -283,7 +329,7 @@ impl GpioChip {
 	}
 
 	/// Request the info of a specific GPIO line.
-	pub fn get_line_info(&self, line_number: &u32) -> io::Result<GpioLine>{
+	pub fn get_line_info(&self, line_number: &u32) -> io::Result<GpioLineInfo>{
 		let mut gpio_line_info = gpio_ioctl::GpioLineInfo::default();
 
 		gpio_line_info.line_offset = *line_number;
@@ -308,7 +354,7 @@ impl GpioChip {
 		let open_drain = gpio_line_info.flags & GPIOLINE_FLAG_OPEN_DRAIN == 1; 
 		let open_source = gpio_line_info.flags & GPIOLINE_FLAG_OPEN_SOURCE == 1;
 		
-		Ok(GpioLine{
+		Ok(GpioLineInfo{
 			direction,
 			active_state,
 			used,
@@ -321,7 +367,7 @@ impl GpioChip {
 	/// operation is a precondition to being able to set the state of the GPIO lines. All the lines
 	/// passed in one request must share the output mode and the active state. The state of lines configured
 	/// as outputs can also be read using the *get_line_value* method.
-	pub fn request_line_values_output(&mut self, line_offset: &Vec<u32>, output_mode: OutputMode, active_low: bool) -> io::Result<()> {
+	pub fn request_line_values_output(&mut self, line_offset: &Vec<u32>, output_mode: OutputMode, active_low: bool) -> io::Result<GpioLine> {
 		let mut gpio_handle_request = gpio_ioctl::GpioHandleRequest::default();
 
 		gpio_handle_request.lines = line_offset.len() as u32;
@@ -344,14 +390,15 @@ impl GpioChip {
 			gpio_ioctl::gpio_get_line_handle(self.fd.as_raw_fd(),&mut gpio_handle_request).unwrap();
 		}
 
-		self.lines.insert(line_offset.clone(), gpio_handle_request.fd);
-
-		Ok(())
+		Ok(GpioLine {
+				parent_chip_name: self.name.clone(),
+				offset: line_offset.clone(),
+				fd: gpio_handle_request.fd,	})
 	}
 
 	/// Request the GPIO chip to configure the lines passed as argument as inputs. Calling this
 	/// operation is a precondition to being able to read the state of the GPIO lines.
-	pub fn request_line_values_input(&mut self, line_offset: &Vec<u32>) -> io::Result<()> {
+	pub fn request_line_values_input(&mut self, line_offset: &Vec<u32>) -> io::Result<GpioLine> {
 		let mut gpio_handle_request = gpio_ioctl::GpioHandleRequest::default();
 		
 		for index in 0 .. line_offset.len() {
@@ -366,49 +413,10 @@ impl GpioChip {
 			gpio_ioctl::gpio_get_line_handle(self.fd.as_raw_fd(), &mut gpio_handle_request).unwrap();
 		}
 
-		self.lines.insert(line_offset.clone(), gpio_handle_request.fd);
-
-		Ok(())
-	}
-
-	/// Get the value of GPIO lines. The values can only be read if the lines have previously been
-	/// requested as either inputs, using the *request_line_values_input* method, or outputs using 
-	/// the *request_line_values_output*. The input vector in both the *request* and get functions
-	/// must match exactly, otherwise the correct file descriptor needed to access the
-	/// lines can not be retrieved and the function will fail.
-	pub fn get_line_value(&self, line_offset: &Vec<u32>) -> io::Result<Vec<u8>>{
-		let line_fd = self.lines.get(line_offset).unwrap();
-
-		let mut data = gpio_ioctl::GpioHandleData::default();
-
-		unsafe {
-			gpio_ioctl::gpio_get_line_values(*line_fd, &mut data).unwrap();
-		}
-
-		let mut output_data : Vec<u8> = Vec::with_capacity(line_offset.len());
-
-		for index in 0..line_offset.len() {
-			output_data.push(data.values[index]);
-		}
-
-		Ok(output_data)
-	}
-
-	/// Set the value of GPIO lines. The value can only be set if the lines have previously been
-	/// requested as outputs using the *request_line_values_output*. The input vector in both
-	/// functions must match exactly, otherwise the correct file descriptor needed to access the
-	/// lines can not be retrieved and the function will fail.
-	pub fn set_line_value(&self, line_offset: &Vec<u32>, value: u8) -> io::Result<()>{
-		let line_fd = self.lines.get(line_offset).unwrap();
-
-		let mut data = gpio_ioctl::GpioHandleData::default();
-		data.values[0] = value;
-
-		unsafe {
-			gpio_ioctl::gpio_set_line_values(*line_fd, &mut data).unwrap();
-		}
-
-		Ok(())
+		Ok(GpioLine{
+				parent_chip_name: self.name.clone(),
+				offset: line_offset.clone(),
+				fd: gpio_handle_request.fd })
 	}
 
 	/// Get the GPIO chip name.
