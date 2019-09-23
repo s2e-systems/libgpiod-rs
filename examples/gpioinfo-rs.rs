@@ -1,6 +1,6 @@
 use std::fs;
 use std::env;
-use libgpio::GpioChip;
+use libgpiod::GpioChip;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

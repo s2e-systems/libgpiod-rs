@@ -6,6 +6,8 @@
 //! interface in safe Rust functions. The functionality provided here is highly inspired by libgpiod.
 //! 
 //! Since all functionality is dependent on Linux function calls, this crate only compiles for Linux systems.
+//! 
+
 #[macro_use]
 extern crate nix;
 
@@ -403,7 +405,7 @@ impl GpioChip {
 	/// operation is a precondition to being able to set the state of the GPIO lines. All the lines
 	/// passed in one request must share the output mode and the active state. The state of lines configured
 	/// as outputs can also be read using the *get_line_value* method.
-	pub fn request_line_values_output(&mut self, line_offset: &Vec<u32>, output_mode: OutputMode, active_low: bool) -> io::Result<GpioLineValue> {
+	pub fn request_line_values_output(&self, line_offset: &Vec<u32>, output_mode: OutputMode, active_low: bool) -> io::Result<GpioLineValue> {
 		let mut gpio_handle_request = gpio_ioctl::GpioHandleRequest::default();
 
 		gpio_handle_request.lines = line_offset.len() as u32;
@@ -435,7 +437,7 @@ impl GpioChip {
 
 	/// Request the GPIO chip to configure the lines passed as argument as inputs. Calling this
 	/// operation is a precondition to being able to read the state of the GPIO lines.
-	pub fn request_line_values_input(&mut self, line_offset: &Vec<u32>) -> io::Result<GpioLineValue> {
+	pub fn request_line_values_input(&self, line_offset: &Vec<u32>) -> io::Result<GpioLineValue> {
 		let mut gpio_handle_request = gpio_ioctl::GpioHandleRequest::default();
 		
 		for index in 0 .. line_offset.len() {

@@ -1,5 +1,5 @@
 [package]
-name = "libgpiod-rs"
+name = "libgpiod"
 version = "0.1.0"
 authors = ["Joao Rebelo <2730147+jrebelo@users.noreply.github.com>"]
 license = "MPL-2.0"
