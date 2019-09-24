@@ -1,6 +1,7 @@
 use std::env;
 use std::path::Path;
-use libgpiod::GpioChip;
+use libgpiod::{GpioChip,OutputMode};
+use std::{thread, time};
 
 fn main()  -> Result<(), &'static str> {
     let args: Vec<String> = env::args().collect();
@@ -21,9 +22,11 @@ fn main()  -> Result<(), &'static str> {
 
     let gpiochip = GpioChip::new(&Path::new(gpiodev)).unwrap();
 
-    let line = gpiochip.request_line_values_input(&offset).unwrap();
+    let line = gpiochip.request_line_values_output(&offset, OutputMode::OpenSource, false, "gpioset").unwrap();
 
-    println!("GPIO get {} offset {:?}. Values {:?}", gpiodev, offset, line.get_line_value());
+    println!("GPIO get {} offset {:?}. Values {:?}", gpiodev, offset, line.set_line_value(1));
+
+    thread::sleep(time::Duration::from_secs(60));
 
     Ok(())
 }

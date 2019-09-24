@@ -268,7 +268,28 @@ impl GpioLineValue {
 
 impl fmt::Display for GpioLineInfo {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "{} {} {} {} {} {} {}", self.direction, self.active_state, self.used, self.open_drain, self.open_source, self.name, self.consumer)
+		write!(f, "\t {}", self.direction)?;
+		if self.used {
+			write!(f, "\t Used")?;
+		}
+		else {
+			write!(f, "\t Unused")?;
+		}
+		if self.consumer.is_empty() {
+			write!(f, "\t Unnamed")?;
+		}
+		else {
+			write!(f,"\t {}", self.consumer)?;
+		}
+		write!(f,"\t {}", self.active_state())?;
+		if self.open_drain {
+			write!(f,"\t Open drain")?;
+		}
+		else if self.open_source {
+			write!(f,"\t Open source")?;
+		}
+
+		Ok(())
 	}
 }
 
@@ -372,21 +393,21 @@ impl GpioChip {
 			convert_nix_to_io_result(gpio_ioctl::gpio_get_line_info(self.fd.as_raw_fd(), &mut gpio_line_info))?;
 		}
 
-		let direction = if gpio_line_info.flags & GPIOLINE_FLAG_IS_OUT == 1 {
+		let direction = if gpio_line_info.flags & GPIOLINE_FLAG_IS_OUT == GPIOLINE_FLAG_IS_OUT {
 			LineDirection::Output
 		} else {
 			LineDirection::Input
 		};
 
-		let active_state = if gpio_line_info.flags & GPIOLINE_FLAG_ACTIVE_LOW == 1 {
+		let active_state = if gpio_line_info.flags & GPIOLINE_FLAG_ACTIVE_LOW == GPIOLINE_FLAG_ACTIVE_LOW {
 			LineActiveState::ActiveLow
 		} else {
 			LineActiveState::ActiveHigh
 		};
 
-		let used = gpio_line_info.flags & GPIOLINE_FLAG_KERNEL == 1;
-		let open_drain = gpio_line_info.flags & GPIOLINE_FLAG_OPEN_DRAIN == 1; 
-		let open_source = gpio_line_info.flags & GPIOLINE_FLAG_OPEN_SOURCE == 1;
+		let used = (gpio_line_info.flags & GPIOLINE_FLAG_KERNEL) == GPIOLINE_FLAG_KERNEL;
+		let open_drain = (gpio_line_info.flags & GPIOLINE_FLAG_OPEN_DRAIN) == GPIOLINE_FLAG_OPEN_DRAIN; 
+		let open_source = (gpio_line_info.flags & GPIOLINE_FLAG_OPEN_SOURCE) == GPIOLINE_FLAG_OPEN_SOURCE;
 		let name = String::from_utf8(gpio_line_info.name.to_vec()).unwrap().trim_end_matches(char::from(0)).to_string();
 		let consumer = String::from_utf8(gpio_line_info.consumer.to_vec()).unwrap().trim_end_matches(char::from(0)).to_string();
 		
@@ -405,7 +426,7 @@ impl GpioChip {
 	/// operation is a precondition to being able to set the state of the GPIO lines. All the lines
 	/// passed in one request must share the output mode and the active state. The state of lines configured
 	/// as outputs can also be read using the *get_line_value* method.
-	pub fn request_line_values_output(&self, line_offset: &Vec<u32>, output_mode: OutputMode, active_low: bool) -> io::Result<GpioLineValue> {
+	pub fn request_line_values_output(&self, line_offset: &Vec<u32>, output_mode: OutputMode, active_low: bool, label: &str) -> io::Result<GpioLineValue> {
 		let mut gpio_handle_request = gpio_ioctl::GpioHandleRequest::default();
 
 		gpio_handle_request.lines = line_offset.len() as u32;
@@ -415,6 +436,7 @@ impl GpioChip {
 		}
 		
 		gpio_handle_request.flags |= GPIOHANDLE_REQUEST_OUTPUT;
+		
 		match output_mode {
 			OutputMode::OpenDrain => gpio_handle_request.flags |= GPIOHANDLE_REQUEST_OPEN_DRAIN,
 			OutputMode::OpenSource => gpio_handle_request.flags |= GPIOHANDLE_REQUEST_OPEN_SOURCE,
@@ -424,6 +446,13 @@ impl GpioChip {
 			gpio_handle_request.flags |= GPIOHANDLE_REQUEST_ACTIVE_LOW;
 		}
 
+		if label.len() > 32 {
+			return Err(io::Error::from(io::ErrorKind::InvalidInput));
+		}
+
+		gpio_handle_request.consumer_label[..label.len()].copy_from_slice(label.as_bytes());
+
+		println!("flags: {}",gpio_handle_request.flags);
 		unsafe {
 			convert_nix_to_io_result(gpio_ioctl::gpio_get_line_handle(self.fd.as_raw_fd(),&mut gpio_handle_request))?;
 		}
@@ -437,7 +466,7 @@ impl GpioChip {
 
 	/// Request the GPIO chip to configure the lines passed as argument as inputs. Calling this
 	/// operation is a precondition to being able to read the state of the GPIO lines.
-	pub fn request_line_values_input(&self, line_offset: &Vec<u32>) -> io::Result<GpioLineValue> {
+	pub fn request_line_values_input(&self, line_offset: &Vec<u32>, active_low: bool, label: &str) -> io::Result<GpioLineValue> {
 		let mut gpio_handle_request = gpio_ioctl::GpioHandleRequest::default();
 		
 		for index in 0 .. line_offset.len() {
@@ -447,6 +476,16 @@ impl GpioChip {
 		gpio_handle_request.lines = line_offset.len() as u32;
 		
 		gpio_handle_request.flags |= GPIOHANDLE_REQUEST_INPUT;
+
+		if active_low {
+			gpio_handle_request.flags |= GPIOHANDLE_REQUEST_ACTIVE_LOW;
+		}
+
+		if label.len() > 32 {
+			return Err(io::Error::from(io::ErrorKind::InvalidInput));
+		}
+
+		gpio_handle_request.consumer_label[..label.len()].copy_from_slice(label.as_bytes());
 
 		unsafe {
 			convert_nix_to_io_result(gpio_ioctl::gpio_get_line_handle(self.fd.as_raw_fd(), &mut gpio_handle_request))?;

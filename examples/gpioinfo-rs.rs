@@ -22,8 +22,7 @@ fn main() {
             println!("{}", gpiochip);
             for line_index in 0..*gpiochip.num_lines() {
                 let line_info = gpiochip.get_line_info(&line_index).unwrap();
-                print!("\t Line \t {}: \t", line_index);
-                println!("{}", line_info);
+                println!("\t Line \t {}: \t {}", line_index, line_info);
             }
         }
     }
