@@ -22,7 +22,7 @@ fn main()  -> Result<(), &'static str> {
 
     let gpiochip = GpioChip::new(&Path::new(gpiodev)).unwrap();
 
-    let line = gpiochip.request_line_values_output(&offset, OutputMode::OpenSource, false, "gpioset").unwrap();
+    let line = gpiochip.request_line_values_output(&offset, OutputMode::None, false, "gpioset").unwrap();
 
     println!("GPIO get {} offset {:?}. Values {:?}", gpiodev, offset, line.set_line_value(1));
 

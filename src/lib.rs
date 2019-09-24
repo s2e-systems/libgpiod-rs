@@ -21,6 +21,7 @@ use std::fs::symlink_metadata;
 use std::os::unix::fs::{MetadataExt, FileTypeExt};
 use std::path::Path;
 use std::os::unix::prelude::*;
+use std::os::unix::io::FromRawFd;
 
 fn convert_nix_to_io_result(result: nix::Result<i32>) -> io::Result<i32>{
 	match result {
@@ -186,6 +187,7 @@ impl fmt::Display for LineActiveState {
 
 /// Represents the output mode of a GPIO line. Possible values are *Open Drain* and *Open Source*.
 pub enum OutputMode {
+	None,
 	OpenDrain,
 	OpenSource,
 }
@@ -194,7 +196,8 @@ impl fmt::Display for OutputMode {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
 			OutputMode::OpenDrain => write!(f, "Open drain"),
-			OutputMode::OpenSource => write!(f, "Open source"), 
+			OutputMode::OpenSource => write!(f, "Open source"),
+			OutputMode::None => write!(f,""),
 		}
 	}
 }
@@ -214,7 +217,7 @@ pub struct GpioLineValue {
 	parent_chip_name: String,
 	direction: LineDirection,
 	offset: Vec<u32>,
-	fd: i32,
+	fd: File,
 }
 
 impl GpioLineValue {
@@ -227,7 +230,7 @@ impl GpioLineValue {
 		let mut data = gpio_ioctl::GpioHandleData::default();
 
 		unsafe {
-			convert_nix_to_io_result(gpio_ioctl::gpio_get_line_values(self.fd, &mut data))?;
+			convert_nix_to_io_result(gpio_ioctl::gpio_get_line_values(self.fd.as_raw_fd(), &mut data))?;
 		}
 
 		let mut output_data : Vec<u8> = Vec::with_capacity(self.offset.len());
@@ -251,7 +254,7 @@ impl GpioLineValue {
 		}
 
 		unsafe {
-			convert_nix_to_io_result(gpio_ioctl::gpio_set_line_values(self.fd, &mut data))?;
+			convert_nix_to_io_result(gpio_ioctl::gpio_set_line_values(self.fd.as_raw_fd(), &mut data))?;
 		}
 
 		Ok(())
@@ -440,6 +443,7 @@ impl GpioChip {
 		match output_mode {
 			OutputMode::OpenDrain => gpio_handle_request.flags |= GPIOHANDLE_REQUEST_OPEN_DRAIN,
 			OutputMode::OpenSource => gpio_handle_request.flags |= GPIOHANDLE_REQUEST_OPEN_SOURCE,
+			_ => (),
 		};
 
 		if active_low {
@@ -452,7 +456,6 @@ impl GpioChip {
 
 		gpio_handle_request.consumer_label[..label.len()].copy_from_slice(label.as_bytes());
 
-		println!("flags: {}",gpio_handle_request.flags);
 		unsafe {
 			convert_nix_to_io_result(gpio_ioctl::gpio_get_line_handle(self.fd.as_raw_fd(),&mut gpio_handle_request))?;
 		}
@@ -461,7 +464,7 @@ impl GpioChip {
 				parent_chip_name: self.name.clone(),
 				direction: LineDirection::Output,
 				offset: line_offset.clone(),
-				fd: gpio_handle_request.fd,	})
+				fd: unsafe{File::from_raw_fd(gpio_handle_request.fd)},	})
 	}
 
 	/// Request the GPIO chip to configure the lines passed as argument as inputs. Calling this
@@ -495,7 +498,7 @@ impl GpioChip {
 				parent_chip_name: self.name.clone(),
 				direction: LineDirection::Input,
 				offset: line_offset.clone(),
-				fd: gpio_handle_request.fd })
+				fd: unsafe{File::from_raw_fd(gpio_handle_request.fd)} })
 	}
 
 	/// Get the GPIO chip name.
