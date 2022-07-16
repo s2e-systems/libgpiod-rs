@@ -158,7 +158,7 @@ pub struct LineInfo {
 
 /// Represents the line values.
 pub struct LineValue {
-    parent_chip_name: String,
+    chip_name: String,
     direction: Direction,
     offset: Vec<u32>,
     fd: File,
@@ -201,8 +201,8 @@ impl LineValue {
     }
 
     /// Get line chip name
-    pub fn parent_chip_name(&self) -> &str {
-        &self.parent_chip_name
+    pub fn chip_name(&self) -> &str {
+        &self.chip_name
     }
 
     /// Get line direction
@@ -486,7 +486,7 @@ impl Chip {
         ))?;
 
         Ok(LineValue {
-            parent_chip_name: self.name.clone(),
+            chip_name: self.name.clone(),
             direction: Direction::Output,
             offset: line_offset.clone(),
             fd: unsafe { File::from_raw_fd(gpio_handle_request.fd) },
@@ -538,7 +538,7 @@ impl Chip {
         ))?;
 
         Ok(LineValue {
-            parent_chip_name: self.name.clone(),
+            chip_name: self.name.clone(),
             direction: Direction::Input,
             offset: line_offset.clone(),
             fd: unsafe { File::from_raw_fd(gpio_handle_request.fd) },
