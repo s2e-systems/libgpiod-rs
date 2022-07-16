@@ -181,6 +181,8 @@ impl fmt::Display for GpioChip {
 }
 
 /// Represents the direction of a GPIO line. Possible values are *Input* and *Output*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum LineDirection {
     Input,
     Output,
@@ -196,6 +198,8 @@ impl fmt::Display for LineDirection {
 }
 
 /// Represents the active state condition of a line. Possible values are *Active High* or *Active Low*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum LineActiveState {
     ActiveLow,
     ActiveHigh,
@@ -211,6 +215,8 @@ impl fmt::Display for LineActiveState {
 }
 
 /// Represents the output mode of a GPIO line. Possible values are *Open Drain* and *Open Source*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum OutputMode {
     PushPull,
     OpenDrain,
