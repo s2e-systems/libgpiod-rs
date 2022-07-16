@@ -342,28 +342,32 @@ impl fmt::Display for GpioLineInfo {
 }
 
 impl GpioLineInfo {
-    pub fn direction(&self) -> &LineDirection {
-        &self.direction
+    /// Get direction of line
+    pub fn direction(&self) -> LineDirection {
+        self.direction
     }
 
-    pub fn active_state(&self) -> &LineActiveState {
-        &self.active_state
+    /// Gte active state of line
+    pub fn active_state(&self) -> LineActiveState {
+        self.active_state
+    }
     }
 
     /// Get output mode of line
-    pub fn output_mode(&self) -> &OutputMode {
-        &self.output_mode
+    pub fn output_mode(&self) -> OutputMode {
+        self.output_mode
     }
 
-    pub fn is_used(&self) -> &bool {
-        &self.used
+    /// Is line used
+    pub fn is_used(&self) -> bool {
+        self.used
     }
 
-    pub fn is_open_drain(&self) -> &bool {
+    pub fn is_open_drain(&self) -> bool {
         matches!(self.output_mode, OutputMode::OpenDrain)
     }
 
-    pub fn is_open_source(&self) -> &bool {
+    pub fn is_open_source(&self) -> bool {
         matches!(self.output_mode, OutputMode::OpenSource)
     }
 
