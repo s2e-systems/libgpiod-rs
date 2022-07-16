@@ -8,26 +8,26 @@
 //! Since all functionality is dependent on Linux function calls, this crate only compiles for Linux systems.
 //!
 
-#[macro_use]
-extern crate nix;
-
-use std::fmt;
-use std::fs::symlink_metadata;
-use std::fs::File;
-use std::fs::OpenOptions;
-use std::io;
-use std::io::Read;
-use std::io::{Error, ErrorKind};
-use std::os::unix::fs::{FileTypeExt, MetadataExt};
-use std::os::unix::io::FromRawFd;
-use std::os::unix::prelude::*;
-use std::path::Path;
+use std::{
+    fmt,
+    fs::{symlink_metadata, File, OpenOptions},
+    io,
+    io::Read,
+    os::unix::{
+        fs::{FileTypeExt, MetadataExt},
+        io::FromRawFd,
+        prelude::*,
+    },
+    path::Path,
+};
 
 fn convert_nix_to_io_result(result: nix::Result<i32>) -> io::Result<i32> {
     result.map_err(io::Error::from)
 }
 
 mod gpio_ioctl {
+    use nix::{ioctl_read, ioctl_readwrite};
+
     // All the structs used for ioctl must be represented in C otherwise weird memory mappings happen.
     //
     // The implementations provided inside this module are also a copy of gpio.h which is normally
@@ -390,8 +390,8 @@ impl GpioChip {
 
         /*if (!S_ISCHR(statbuf.st_mode)) */
         if !file_metadata.file_type().is_char_device() {
-            return Err(Error::new(
-                ErrorKind::InvalidInput,
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
                 "File is not character device",
             ));
         }
@@ -405,8 +405,8 @@ impl GpioChip {
         if !Path::new(&sysfs).is_file()
         /*I check if it is a file instead of read access done in libgpiod */
         {
-            return Err(Error::new(
-                ErrorKind::InvalidInput,
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
                 "Matching GPIO in sys not found",
             ));
         }
@@ -430,7 +430,10 @@ impl GpioChip {
         );
 
         if String::from_utf8(sysfs_rdev[0..lf_pos - 1].to_vec()).unwrap() == file_rdev {
-            return Err(Error::new(ErrorKind::Other, "Unmatched device versions"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Unmatched device versions",
+            ));
         }
 
         Ok(true)
