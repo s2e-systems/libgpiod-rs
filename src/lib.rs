@@ -292,6 +292,7 @@ pub struct GpioLineInfo {
     consumer: String,
 }
 
+/// Represents the line values.
 pub struct GpioLineValue {
     parent_chip_name: String,
     direction: LineDirection,
@@ -341,10 +342,12 @@ impl GpioLineValue {
         Ok(())
     }
 
+    /// Get line chip name
     pub fn parent_chip_name(&self) -> &str {
         &self.parent_chip_name
     }
 
+    /// Get line direction
     pub fn direction(&self) -> &LineDirection {
         &self.direction
     }
@@ -378,8 +381,8 @@ impl GpioLineInfo {
         self.direction
     }
 
-    /// Gte active state of line
-    pub fn active_state(&self) -> LineActiveState {
+    /// Get active state of line
+    pub fn active_state(&self) -> ActiveState {
         self.active_state
     }
 
@@ -408,18 +411,22 @@ impl GpioLineInfo {
         self.used
     }
 
+    /// Is line configured as open drain output
     pub fn is_open_drain(&self) -> bool {
         matches!(self.output_mode, OutputMode::OpenDrain)
     }
 
+    /// Is line configured as open source output
     pub fn is_open_source(&self) -> bool {
         matches!(self.output_mode, OutputMode::OpenSource)
     }
 
+    /// Get line name
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Get line consumer
     pub fn consumer(&self) -> &str {
         &self.consumer
     }
