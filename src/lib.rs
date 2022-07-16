@@ -24,15 +24,7 @@ use std::os::unix::prelude::*;
 use std::path::Path;
 
 fn convert_nix_to_io_result(result: nix::Result<i32>) -> io::Result<i32> {
-    match result {
-        Err(e) => match e {
-            nix::Error::Sys(errno) => return Err(io::Error::from(errno)),
-            nix::Error::InvalidPath => return Err(io::Error::from(io::ErrorKind::InvalidInput)),
-            nix::Error::InvalidUtf8 => return Err(io::Error::from(io::ErrorKind::InvalidData)),
-            nix::Error::UnsupportedOperation => return Err(io::Error::from(io::ErrorKind::Other)),
-        },
-        Ok(v) => return Ok(v),
-    }
+    result.map_err(io::Error::from)
 }
 
 mod gpio_ioctl {
