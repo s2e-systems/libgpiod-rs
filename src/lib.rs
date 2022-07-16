@@ -212,7 +212,7 @@ impl fmt::Display for LineActiveState {
 
 /// Represents the output mode of a GPIO line. Possible values are *Open Drain* and *Open Source*.
 pub enum OutputMode {
-    None,
+    PushPull,
     OpenDrain,
     OpenSource,
 }
@@ -220,9 +220,9 @@ pub enum OutputMode {
 impl fmt::Display for OutputMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            OutputMode::PushPull => write!(f, "Push pull"),
             OutputMode::OpenDrain => write!(f, "Open drain"),
             OutputMode::OpenSource => write!(f, "Open source"),
-            OutputMode::None => write!(f, ""),
         }
     }
 }
@@ -334,7 +334,7 @@ impl GpioLineInfo {
         match (self.open_drain, self.open_source) {
             (true, false) => OutputMode::OpenDrain,
             (false, true) => OutputMode::OpenSource,
-            _ => OutputMode::None,
+            _ => OutputMode::PushPull,
         }
     }
 
