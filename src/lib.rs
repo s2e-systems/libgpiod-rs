@@ -152,6 +152,8 @@ const GPIOLINE_FLAG_IS_OUT: u32 = 1 << 1;
 const GPIOLINE_FLAG_ACTIVE_LOW: u32 = 1 << 2;
 const GPIOLINE_FLAG_OPEN_DRAIN: u32 = 1 << 3;
 const GPIOLINE_FLAG_OPEN_SOURCE: u32 = 1 << 4;
+const GPIOLINE_FLAG_BIAS_PULL_UP: u32 = 1 << 5;
+const GPIOLINE_FLAG_BIAS_PULL_DOWN: u32 = 1 << 6;
 
 // **************** Flags for line requests ***************
 const GPIOHANDLE_REQUEST_INPUT: u32 = 1 << 0;
@@ -159,6 +161,9 @@ const GPIOHANDLE_REQUEST_OUTPUT: u32 = 1 << 1;
 const GPIOHANDLE_REQUEST_ACTIVE_LOW: u32 = 1 << 2;
 const GPIOHANDLE_REQUEST_OPEN_DRAIN: u32 = 1 << 3;
 const GPIOHANDLE_REQUEST_OPEN_SOURCE: u32 = 1 << 4;
+const GPIOHANDLE_REQUEST_BIAS_PULL_UP: u32 = 1 << 5;
+const GPIOHANDLE_REQUEST_BIAS_PULL_DOWN: u32 = 1 << 6;
+const GPIOHANDLE_REQUEST_BIAS_DISABLE: u32 = 1 << 7;
 
 /// Represents a Linux chardev GPIO chip interface.
 /// It can be used to get information about the chip and lines and
@@ -226,6 +231,31 @@ impl fmt::Display for LineActiveState {
     }
 }
 
+/// Represents the input bias of a GPIO line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum InputBias {
+    Disable,
+    PullUp,
+    PullDown,
+}
+
+impl AsRef<str> for InputBias {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Disable => "Disable",
+            Self::PullUp => "Pull up",
+            Self::PullDown => "Pull down",
+        }
+    }
+}
+
+impl fmt::Display for InputBias {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_ref().fmt(f)
+    }
+}
+
 /// Represents the output mode of a GPIO line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -256,6 +286,7 @@ pub struct GpioLineInfo {
     direction: LineDirection,
     active_state: LineActiveState,
     used: bool,
+    input_bias: InputBias,
     output_mode: OutputMode,
     name: String,
     consumer: String,
@@ -351,6 +382,20 @@ impl GpioLineInfo {
     pub fn active_state(&self) -> LineActiveState {
         self.active_state
     }
+
+    /// Get input bias of line
+    pub fn input_bias(&self) -> InputBias {
+        self.input_bias
+    }
+
+    /// In line configured as pull up input
+    pub fn is_pull_up(&self) -> bool {
+        matches!(self.input_bias, InputBias::PullUp)
+    }
+
+    /// In line configured as pull down input
+    pub fn is_pull_down(&self) -> bool {
+        matches!(self.input_bias, InputBias::PullDown)
     }
 
     /// Get output mode of line
@@ -490,6 +535,16 @@ impl GpioChip {
             };
 
         let used = (gpio_line_info.flags & GPIOLINE_FLAG_KERNEL) == GPIOLINE_FLAG_KERNEL;
+
+        let input_bias = match (
+            (gpio_line_info.flags & GPIOLINE_FLAG_BIAS_PULL_UP) == GPIOLINE_FLAG_BIAS_PULL_UP,
+            (gpio_line_info.flags & GPIOLINE_FLAG_BIAS_PULL_DOWN) == GPIOLINE_FLAG_BIAS_PULL_DOWN,
+        ) {
+            (true, false) => InputBias::PullUp,
+            (false, true) => InputBias::PullDown,
+            _ => InputBias::Disable,
+        };
+
         let output_mode = match (
             (gpio_line_info.flags & GPIOLINE_FLAG_OPEN_DRAIN) == GPIOLINE_FLAG_OPEN_DRAIN,
             (gpio_line_info.flags & GPIOLINE_FLAG_OPEN_SOURCE) == GPIOLINE_FLAG_OPEN_SOURCE,
@@ -511,6 +566,7 @@ impl GpioChip {
             direction,
             active_state,
             used,
+            input_bias,
             output_mode,
             name,
             consumer,
@@ -572,6 +628,7 @@ impl GpioChip {
     pub fn request_line_values_input(
         &self,
         line_offset: &Vec<u32>,
+        input_bias: Option<InputBias>,
         active_low: bool,
         label: &str,
     ) -> io::Result<GpioLineValue> {
@@ -584,6 +641,16 @@ impl GpioChip {
         gpio_handle_request.lines = line_offset.len() as u32;
 
         gpio_handle_request.flags |= GPIOHANDLE_REQUEST_INPUT;
+
+        if let Some(input_bias) = input_bias {
+            match input_bias {
+                InputBias::PullUp => gpio_handle_request.flags |= GPIOHANDLE_REQUEST_BIAS_PULL_UP,
+                InputBias::PullDown => {
+                    gpio_handle_request.flags |= GPIOHANDLE_REQUEST_BIAS_PULL_DOWN
+                }
+                InputBias::Disable => gpio_handle_request.flags |= GPIOHANDLE_REQUEST_BIAS_DISABLE,
+            }
+        }
 
         if active_low {
             gpio_handle_request.flags |= GPIOHANDLE_REQUEST_ACTIVE_LOW;
