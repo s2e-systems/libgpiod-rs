@@ -21,8 +21,10 @@ use std::{
     path::Path,
 };
 
-fn convert_nix_to_io_result(result: nix::Result<i32>) -> io::Result<i32> {
-    result.map_err(io::Error::from)
+macro_rules! unsafe_call {
+    ($res:expr) => {
+        unsafe { $res }.map_err(io::Error::from)
+    };
 }
 
 mod gpio_ioctl {
@@ -252,12 +254,10 @@ impl GpioLineValue {
     pub fn get_line_value(&self) -> io::Result<Vec<u8>> {
         let mut data = gpio_ioctl::GpioHandleData::default();
 
-        unsafe {
-            convert_nix_to_io_result(gpio_ioctl::gpio_get_line_values(
-                self.fd.as_raw_fd(),
-                &mut data,
-            ))?;
-        }
+        unsafe_call!(gpio_ioctl::gpio_get_line_values(
+            self.fd.as_raw_fd(),
+            &mut data
+        ))?;
 
         let mut output_data: Vec<u8> = Vec::with_capacity(self.offset.len());
 
@@ -279,12 +279,10 @@ impl GpioLineValue {
             data.values[line_index] = value;
         }
 
-        unsafe {
-            convert_nix_to_io_result(gpio_ioctl::gpio_set_line_values(
-                self.fd.as_raw_fd(),
-                &mut data,
-            ))?;
-        }
+        unsafe_call!(gpio_ioctl::gpio_set_line_values(
+            self.fd.as_raw_fd(),
+            &mut data
+        ))?;
 
         Ok(())
     }
@@ -361,12 +359,10 @@ impl GpioChip {
 
         let mut gpio_chip_info = gpio_ioctl::GpioChipInfo::default();
 
-        unsafe {
-            convert_nix_to_io_result(gpio_ioctl::gpio_get_chip_info(
-                dev_file.as_raw_fd(),
-                &mut gpio_chip_info,
-            ))?;
-        }
+        unsafe_call!(gpio_ioctl::gpio_get_chip_info(
+            dev_file.as_raw_fd(),
+            &mut gpio_chip_info
+        ))?;
 
         Ok(GpioChip {
             name: String::from_utf8(gpio_chip_info.name.to_vec())
@@ -445,12 +441,10 @@ impl GpioChip {
 
         gpio_line_info.line_offset = *line_number;
 
-        unsafe {
-            convert_nix_to_io_result(gpio_ioctl::gpio_get_line_info(
-                self.fd.as_raw_fd(),
-                &mut gpio_line_info,
-            ))?;
-        }
+        unsafe_call!(gpio_ioctl::gpio_get_line_info(
+            self.fd.as_raw_fd(),
+            &mut gpio_line_info,
+        ))?;
 
         let direction = if gpio_line_info.flags & GPIOLINE_FLAG_IS_OUT == GPIOLINE_FLAG_IS_OUT {
             LineDirection::Output
@@ -527,12 +521,10 @@ impl GpioChip {
 
         gpio_handle_request.consumer_label[..label.len()].copy_from_slice(label.as_bytes());
 
-        unsafe {
-            convert_nix_to_io_result(gpio_ioctl::gpio_get_line_handle(
-                self.fd.as_raw_fd(),
-                &mut gpio_handle_request,
-            ))?;
-        }
+        unsafe_call!(gpio_ioctl::gpio_get_line_handle(
+            self.fd.as_raw_fd(),
+            &mut gpio_handle_request,
+        ))?;
 
         Ok(GpioLineValue {
             parent_chip_name: self.name.clone(),
@@ -570,12 +562,10 @@ impl GpioChip {
 
         gpio_handle_request.consumer_label[..label.len()].copy_from_slice(label.as_bytes());
 
-        unsafe {
-            convert_nix_to_io_result(gpio_ioctl::gpio_get_line_handle(
-                self.fd.as_raw_fd(),
-                &mut gpio_handle_request,
-            ))?;
-        }
+        unsafe_call!(gpio_ioctl::gpio_get_line_handle(
+            self.fd.as_raw_fd(),
+            &mut gpio_handle_request,
+        ))?;
 
         Ok(GpioLineValue {
             parent_chip_name: self.name.clone(),
