@@ -329,6 +329,15 @@ impl GpioLineInfo {
         &self.active_state
     }
 
+    /// Get output mode of line
+    pub fn output_mode(&self) -> OutputMode {
+        match (self.open_drain, self.open_source) {
+            (true, false) => OutputMode::OpenDrain,
+            (false, true) => OutputMode::OpenSource,
+            _ => OutputMode::None,
+        }
+    }
+
     pub fn is_used(&self) -> &bool {
         &self.used
     }
