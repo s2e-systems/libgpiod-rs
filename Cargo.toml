@@ -11,3 +11,7 @@ edition = "2021"
 version = "0.24"
 default-features = false
 features = ["ioctl"]
+
+[features]
+default = ["v2"]
+v2 = []

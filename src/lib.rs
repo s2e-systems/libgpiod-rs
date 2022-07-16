@@ -9,19 +9,26 @@
 //!
 
 mod raw;
+mod types;
+mod utils;
 
 use std::{
+    collections::HashMap,
     fmt,
     fs::{symlink_metadata, File, OpenOptions},
     io,
     io::Read,
     os::unix::{
         fs::{FileTypeExt, MetadataExt},
-        io::FromRawFd,
+        io::{FromRawFd, RawFd},
         prelude::*,
     },
     path::Path,
+    time::{Duration, SystemTime},
 };
+
+pub use types::{Active, Bias, BitId, Direction, Drive, Edge, EdgeDetect, Event, LineId, Values};
+use utils::*;
 
 macro_rules! unsafe_call {
     ($res:expr) => {
@@ -29,119 +36,220 @@ macro_rules! unsafe_call {
     };
 }
 
-/// Represents a Linux chardev GPIO chip interface.
-/// It can be used to get information about the chip and lines and
-/// to request GPIO lines that can be used as output or input.
-pub struct Chip {
-    name: String,
-    label: String,
-    num_lines: u32,
-    fd: File,
+struct LineValues {
+    chip_name: String,
+    offset: Vec<LineId>,
+    index: HashMap<LineId, BitId>,
+    file: File,
 }
 
-impl fmt::Display for Chip {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} [{}] ({} lines)",
-            self.name, self.label, self.num_lines
-        )
+impl LineValues {
+    fn new(chip_name: &str, offset: &[LineId], fd: RawFd) -> Self {
+        let chip_name = chip_name.into();
+        let offset = offset.to_owned();
+        let file = unsafe { File::from_raw_fd(fd) };
+        let index = offset
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, line)| (line, index as _))
+            .collect();
+        Self {
+            chip_name,
+            offset,
+            index,
+            file,
+        }
     }
-}
 
-/// Represents the direction of a GPIO line. Possible values are *Input* and *Output*.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u8)]
-pub enum Direction {
-    Input,
-    Output,
-}
+    fn get_values<T: From<Values>>(&self) -> io::Result<T> {
+        let mut output_data = Values::default();
 
-impl AsRef<str> for Direction {
-    fn as_ref(&self) -> &str {
-        match self {
-            Self::Input => "Input",
-            Self::Output => "Output",
+        #[cfg(not(feature = "v2"))]
+        {
+            let mut data = raw::v1::GpioHandleData::default();
+
+            unsafe_call!(raw::v1::gpio_get_line_values(
+                self.file.as_raw_fd(),
+                &mut data
+            ))?;
+
+            for index in 0..self.offset.len() {
+                output_data.set(index as _, data.values[index] != 0);
+            }
+        }
+
+        #[cfg(feature = "v2")]
+        {
+            unsafe_call!(raw::v2::gpio_line_get_values(
+                self.file.as_raw_fd(),
+                // it's safe because data layout is same
+                core::mem::transmute(&mut output_data)
+            ))?;
+        }
+
+        Ok(output_data.into())
+    }
+
+    fn set_values(&self, values: impl Into<Values>) -> io::Result<()> {
+        let values = values.into();
+
+        #[cfg(not(feature = "v2"))]
+        {
+            let mut data = raw::v1::GpioHandleData::default();
+
+            for index in 0..self.offset.len() {
+                data.values[index] = values.get(index as _).unwrap_or(false) as _;
+            }
+
+            unsafe_call!(raw::v1::gpio_set_line_values(
+                self.file.as_raw_fd(),
+                &mut data
+            ))?;
+        }
+
+        #[cfg(feature = "v2")]
+        {
+            let mut values = values;
+
+            unsafe_call!(raw::v2::gpio_line_set_values(
+                self.file.as_raw_fd(),
+                core::mem::transmute(&mut values)
+            ))?;
+        }
+
+        Ok(())
+    }
+
+    fn line_bit(&self, line: LineId) -> Option<BitId> {
+        self.index.get(&line).copied()
+    }
+
+    #[cfg(not(feature = "v2"))]
+    fn make_event(&self, line: BitId, event: raw::v1::GpioEventData) -> io::Result<Event> {
+        let edge = match event.id {
+            raw::v1::GPIOEVENT_EVENT_RISING_EDGE => Edge::Rising,
+            raw::v1::GPIOEVENT_EVENT_FALLING_EDGE => Edge::Falling,
+            _ => return Err(invalid_data()),
+        };
+
+        let time = SystemTime::UNIX_EPOCH + Duration::from_nanos(event.timestamp);
+
+        Ok(Event { line, edge, time })
+    }
+
+    #[cfg(feature = "v2")]
+    fn make_event(&self, event: raw::v2::GpioLineEvent) -> io::Result<Event> {
+        let line = self.line_bit(event.offset).ok_or_else(invalid_data)?;
+
+        let edge = match event.id {
+            raw::v2::GPIO_LINE_EVENT_RISING_EDGE => Edge::Rising,
+            raw::v2::GPIO_LINE_EVENT_FALLING_EDGE => Edge::Falling,
+            _ => return Err(invalid_data()),
+        };
+
+        let time = SystemTime::UNIX_EPOCH + Duration::from_nanos(event.timestamp_ns);
+
+        Ok(Event { line, edge, time })
+    }
+
+    fn read_event(&mut self) -> io::Result<Event> {
+        #[cfg(not(feature = "v2"))]
+        {
+            // TODO: Read multiple fds simultaneously via polling
+            let mut event = raw::v1::GpioEventData::default();
+
+            self.file.read(event.as_mut())?;
+
+            self.make_event(line, event)
+        }
+
+        #[cfg(feature = "v2")]
+        {
+            let mut event = raw::v2::GpioLineEvent::default();
+
+            self.file.read(event.as_mut())?;
+
+            self.make_event(event)
         }
     }
 }
 
-impl fmt::Display for Direction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.as_ref().fmt(f)
+/// Represents the input values.
+pub struct Inputs(LineValues);
+
+impl AsRef<File> for Inputs {
+    fn as_ref(&self) -> &File {
+        &self.0.file
     }
 }
 
-/// Represents the active state condition of a line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u8)]
-pub enum Active {
-    Low,
-    High,
-}
+impl Inputs {
+    /// Get line chip name
+    pub fn chip_name(&self) -> &str {
+        &self.0.chip_name
+    }
 
-impl AsRef<str> for Active {
-    fn as_ref(&self) -> &str {
-        match self {
-            Self::Low => "low",
-            Self::High => "high",
-        }
+    /// Get line offsets
+    pub fn lines(&self) -> &[LineId] {
+        &self.0.offset
+    }
+
+    /// Get the value of GPIO lines. The values can only be read if the lines have previously been
+    /// requested as either inputs, using the *request_line_values_input* method, or outputs using
+    /// the *request_line_values_output*. The input vector in both the *request* and get functions
+    /// must match exactly, otherwise the correct file descriptor needed to access the
+    /// lines can not be retrieved and the function will fail.
+    pub fn get_values<T: From<Values>>(&self) -> io::Result<T> {
+        self.0.get_values()
+    }
+
+    /// Read events synchronously
+    pub fn read_event(&mut self) -> io::Result<Event> {
+        self.0.read_event()
     }
 }
 
-impl fmt::Display for Active {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.as_ref().fmt(f)
+/// Represents the output values.
+pub struct Outputs(LineValues);
+
+impl AsRef<File> for Outputs {
+    fn as_ref(&self) -> &File {
+        &self.0.file
     }
 }
 
-/// Represents the input bias of a GPIO line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u8)]
-pub enum Bias {
-    Disable,
-    PullUp,
-    PullDown,
-}
-
-impl AsRef<str> for Bias {
-    fn as_ref(&self) -> &str {
-        match self {
-            Self::Disable => "Disable",
-            Self::PullUp => "Pull up",
-            Self::PullDown => "Pull down",
-        }
+impl Outputs {
+    /// Get line chip name
+    pub fn chip_name(&self) -> &str {
+        &self.0.chip_name
     }
-}
 
-impl fmt::Display for Bias {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.as_ref().fmt(f)
+    /// Get line offsets
+    pub fn lines(&self) -> &[LineId] {
+        &self.0.offset
     }
-}
 
-/// Represents the output mode of a GPIO line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u8)]
-pub enum Drive {
-    PushPull,
-    OpenDrain,
-    OpenSource,
-}
-
-impl AsRef<str> for Drive {
-    fn as_ref(&self) -> &str {
-        match self {
-            Self::PushPull => "Push pull",
-            Self::OpenDrain => "Open drain",
-            Self::OpenSource => "Open source",
-        }
+    /// Get the value of GPIO lines. The values can only be read if the lines have previously been
+    /// requested as either inputs, using the *request_line_values_input* method, or outputs using
+    /// the *request_line_values_output*. The input vector in both the *request* and get functions
+    /// must match exactly, otherwise the correct file descriptor needed to access the
+    /// lines can not be retrieved and the function will fail.
+    pub fn get_values<T: From<Values>>(&self) -> io::Result<T> {
+        self.0.get_values()
     }
-}
 
-impl fmt::Display for Drive {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.as_ref().fmt(f)
+    /// Set the value of GPIO lines. The value can only be set if the lines have previously been
+    /// requested as outputs using the *request_line_values_output*. The input vector in both
+    /// functions must match exactly, otherwise the correct file descriptor needed to access the
+    /// lines can not be retrieved and the function will fail.
+    pub fn set_values(&self, values: impl Into<Values>) -> io::Result<()> {
+        self.0.set_values(values)
+    }
+
+    /// Read events synchronously
+    pub fn read_event(&mut self) -> io::Result<Event> {
+        self.0.read_event()
     }
 }
 
@@ -149,66 +257,12 @@ impl fmt::Display for Drive {
 pub struct LineInfo {
     direction: Direction,
     active: Active,
+    edge: EdgeDetect,
     used: bool,
     bias: Bias,
     drive: Drive,
     name: String,
     consumer: String,
-}
-
-/// Represents the line values.
-pub struct LineValue {
-    chip_name: String,
-    direction: Direction,
-    offset: Vec<u32>,
-    fd: File,
-}
-
-impl LineValue {
-    /// Get the value of GPIO lines. The values can only be read if the lines have previously been
-    /// requested as either inputs, using the *request_line_values_input* method, or outputs using
-    /// the *request_line_values_output*. The input vector in both the *request* and get functions
-    /// must match exactly, otherwise the correct file descriptor needed to access the
-    /// lines can not be retrieved and the function will fail.
-    pub fn get_line_value(&self) -> io::Result<Vec<u8>> {
-        let mut data = raw::GpioHandleData::default();
-
-        unsafe_call!(raw::gpio_get_line_values(self.fd.as_raw_fd(), &mut data))?;
-
-        let mut output_data: Vec<u8> = Vec::with_capacity(self.offset.len());
-
-        for index in 0..self.offset.len() {
-            output_data.push(data.values[index]);
-        }
-
-        Ok(output_data)
-    }
-
-    /// Set the value of GPIO lines. The value can only be set if the lines have previously been
-    /// requested as outputs using the *request_line_values_output*. The input vector in both
-    /// functions must match exactly, otherwise the correct file descriptor needed to access the
-    /// lines can not be retrieved and the function will fail.
-    pub fn set_line_value(&self, value: u8) -> io::Result<()> {
-        let mut data = raw::GpioHandleData::default();
-
-        for line_index in 0..self.offset.len() {
-            data.values[line_index] = value;
-        }
-
-        unsafe_call!(raw::gpio_set_line_values(self.fd.as_raw_fd(), &mut data))?;
-
-        Ok(())
-    }
-
-    /// Get line chip name
-    pub fn chip_name(&self) -> &str {
-        &self.chip_name
-    }
-
-    /// Get line direction
-    pub fn direction(&self) -> &Direction {
-        &self.direction
-    }
 }
 
 impl fmt::Display for LineInfo {
@@ -228,7 +282,9 @@ impl fmt::Display for LineInfo {
         if !matches!(self.drive, Drive::PushPull) {
             write!(f, "\t {}", self.drive)?;
         }
-
+        if !matches!(self.edge, EdgeDetect::Disable) {
+            write!(f, "\t Edge {}", self.edge)?;
+        }
         Ok(())
     }
 }
@@ -242,6 +298,11 @@ impl LineInfo {
     /// Get active state of line
     pub fn active(&self) -> Active {
         self.active
+    }
+
+    /// Get edge detect of line
+    pub fn edge(&self) -> EdgeDetect {
+        self.edge
     }
 
     /// Get input bias of line
@@ -290,31 +351,45 @@ impl LineInfo {
     }
 }
 
+/// Represents a Linux chardev GPIO chip interface.
+/// It can be used to get information about the chip and lines and
+/// to request GPIO lines that can be used as output or input.
+pub struct Chip {
+    name: String,
+    label: String,
+    num_lines: LineId,
+    file: File,
+}
+
+impl fmt::Display for Chip {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} [{}] ({} lines)",
+            self.name, self.label, self.num_lines
+        )
+    }
+}
+
 impl Chip {
     /// Create a new GPIO chip interface.
     pub fn new(path: impl AsRef<Path>) -> io::Result<Chip> {
-        let dev_file = OpenOptions::new().read(true).write(true).open(&path)?;
+        let dev = OpenOptions::new().read(true).write(true).open(&path)?;
 
         Chip::is_gpiochip_cdev(path)?;
 
         let mut gpio_chip_info = raw::GpioChipInfo::default();
 
         unsafe_call!(raw::gpio_get_chip_info(
-            dev_file.as_raw_fd(),
+            dev.as_raw_fd(),
             &mut gpio_chip_info
         ))?;
 
         Ok(Chip {
-            name: String::from_utf8(gpio_chip_info.name.to_vec())
-                .unwrap()
-                .trim_end_matches(char::from(0))
-                .to_string(),
-            label: String::from_utf8(gpio_chip_info.label.to_vec())
-                .unwrap()
-                .trim_end_matches(char::from(0))
-                .to_string(),
+            name: safe_get_str(&gpio_chip_info.name)?.into(),
+            label: safe_get_str(&gpio_chip_info.label)?.into(),
             num_lines: gpio_chip_info.lines,
-            fd: dev_file,
+            file: dev,
         })
     }
 
@@ -335,7 +410,7 @@ impl Chip {
         /*basename(pathcpy);*/
         let basename = path.as_ref().file_name().unwrap();
 
-        let sysfs = format! {"/sys/bus/gpio/devices/{}/dev", basename.to_str().unwrap()};
+        let sysfs = format!("/sys/bus/gpio/devices/{}/dev", basename.to_str().unwrap());
 
         /*if (access(sysfsp, R_OK) != 0)*/
         if !Path::new(&sysfs).is_file()
@@ -365,7 +440,7 @@ impl Chip {
             file_metadata.rdev() & 0xFF
         );
 
-        if String::from_utf8(sysfs_rdev[0..lf_pos - 1].to_vec()).unwrap() == file_rdev {
+        if safe_get_str(&sysfs_rdev[0..lf_pos - 1])? == file_rdev {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "Unmatched device versions",
@@ -376,173 +451,290 @@ impl Chip {
     }
 
     /// Request the info of a specific GPIO line.
-    pub fn get_line_info(&self, line_number: &u32) -> io::Result<LineInfo> {
-        let mut gpio_line_info = raw::GpioLineInfo::default();
+    pub fn line_info(&self, line: LineId) -> io::Result<LineInfo> {
+        #[cfg(not(feature = "v2"))]
+        {
+            let mut gpio_line_info = raw::v1::GpioLineInfo::default();
 
-        gpio_line_info.line_offset = *line_number;
+            gpio_line_info.line_offset = line;
 
-        unsafe_call!(raw::gpio_get_line_info(
-            self.fd.as_raw_fd(),
-            &mut gpio_line_info,
-        ))?;
+            unsafe_call!(raw::v1::gpio_get_line_info(
+                self.file.as_raw_fd(),
+                &mut gpio_line_info
+            ))?;
 
-        let direction =
-            if gpio_line_info.flags & raw::GPIOLINE_FLAG_IS_OUT == raw::GPIOLINE_FLAG_IS_OUT {
+            let direction = if is_set(gpio_line_info.flags, raw::v1::GPIOLINE_FLAG_IS_OUT) {
                 Direction::Output
             } else {
                 Direction::Input
             };
 
-        let active = if gpio_line_info.flags & raw::GPIOLINE_FLAG_ACTIVE_LOW
-            == raw::GPIOLINE_FLAG_ACTIVE_LOW
+            let active = if is_set(gpio_line_info.flags, raw::v1::GPIOLINE_FLAG_ACTIVE_LOW) {
+                Active::Low
+            } else {
+                Active::High
+            };
+
+            let edge = EdgeDetect::Disable;
+
+            let used = is_set(gpio_line_info.flags, raw::v1::GPIOLINE_FLAG_KERNEL);
+
+            let bias = match (
+                is_set(gpio_line_info.flags, raw::v1::GPIOLINE_FLAG_BIAS_PULL_UP),
+                is_set(gpio_line_info.flags, raw::v1::GPIOLINE_FLAG_BIAS_PULL_DOWN),
+            ) {
+                (true, false) => Bias::PullUp,
+                (false, true) => Bias::PullDown,
+                _ => Bias::Disable,
+            };
+
+            let drive = match (
+                is_set(gpio_line_info.flags, raw::v1::GPIOLINE_FLAG_OPEN_DRAIN),
+                is_set(gpio_line_info.flags, raw::v1::GPIOLINE_FLAG_OPEN_SOURCE),
+            ) {
+                (true, false) => Drive::OpenDrain,
+                (false, true) => Drive::OpenSource,
+                _ => Drive::PushPull,
+            };
+            let name = safe_get_str(&gpio_line_info.name)?.into();
+            let consumer = safe_get_str(&gpio_line_info.consumer)?.into();
+
+            Ok(LineInfo {
+                direction,
+                active,
+                edge,
+                used,
+                bias,
+                drive,
+                name,
+                consumer,
+            })
+        }
+
+        #[cfg(feature = "v2")]
         {
-            Active::Low
-        } else {
-            Active::High
-        };
+            let mut gpio_line_info = raw::v2::GpioLineInfo::default();
 
-        let used = (gpio_line_info.flags & raw::GPIOLINE_FLAG_KERNEL) == raw::GPIOLINE_FLAG_KERNEL;
+            gpio_line_info.offset = line;
 
-        let bias = match (
-            (gpio_line_info.flags & raw::GPIOLINE_FLAG_BIAS_PULL_UP)
-                == raw::GPIOLINE_FLAG_BIAS_PULL_UP,
-            (gpio_line_info.flags & raw::GPIOLINE_FLAG_BIAS_PULL_DOWN)
-                == raw::GPIOLINE_FLAG_BIAS_PULL_DOWN,
-        ) {
-            (true, false) => Bias::PullUp,
-            (false, true) => Bias::PullDown,
-            _ => Bias::Disable,
-        };
+            unsafe_call!(raw::v2::gpio_get_line_info(
+                self.file.as_raw_fd(),
+                &mut gpio_line_info
+            ))?;
 
-        let drive = match (
-            (gpio_line_info.flags & raw::GPIOLINE_FLAG_OPEN_DRAIN) == raw::GPIOLINE_FLAG_OPEN_DRAIN,
-            (gpio_line_info.flags & raw::GPIOLINE_FLAG_OPEN_SOURCE)
-                == raw::GPIOLINE_FLAG_OPEN_SOURCE,
-        ) {
-            (true, false) => Drive::OpenDrain,
-            (false, true) => Drive::OpenSource,
-            _ => Drive::PushPull,
-        };
-        let name = String::from_utf8(gpio_line_info.name.to_vec())
-            .unwrap()
-            .trim_end_matches(char::from(0))
-            .to_string();
-        let consumer = String::from_utf8(gpio_line_info.consumer.to_vec())
-            .unwrap()
-            .trim_end_matches(char::from(0))
-            .to_string();
+            let direction = if is_set(gpio_line_info.flags, raw::v2::GPIO_LINE_FLAG_OUTPUT) {
+                Direction::Output
+            } else {
+                Direction::Input
+            };
 
-        Ok(LineInfo {
-            direction,
-            active,
-            used,
-            bias,
-            drive,
-            name,
-            consumer,
-        })
+            let active = if is_set(gpio_line_info.flags, raw::v2::GPIO_LINE_FLAG_ACTIVE_LOW) {
+                Active::Low
+            } else {
+                Active::High
+            };
+
+            let edge = match (
+                is_set(gpio_line_info.flags, raw::v2::GPIO_LINE_FLAG_EDGE_RISING),
+                is_set(gpio_line_info.flags, raw::v2::GPIO_LINE_FLAG_EDGE_FALLING),
+            ) {
+                (true, false) => EdgeDetect::Rising,
+                (false, true) => EdgeDetect::Falling,
+                (true, true) => EdgeDetect::Both,
+                _ => EdgeDetect::Disable,
+            };
+
+            let used = is_set(gpio_line_info.flags, raw::v2::GPIO_LINE_FLAG_USED);
+
+            let bias = match (
+                is_set(gpio_line_info.flags, raw::v2::GPIO_LINE_FLAG_BIAS_PULL_UP),
+                is_set(gpio_line_info.flags, raw::v2::GPIO_LINE_FLAG_BIAS_PULL_DOWN),
+            ) {
+                (true, false) => Bias::PullUp,
+                (false, true) => Bias::PullDown,
+                _ => Bias::Disable,
+            };
+
+            let drive = match (
+                is_set(gpio_line_info.flags, raw::v2::GPIO_LINE_FLAG_OPEN_DRAIN),
+                is_set(gpio_line_info.flags, raw::v2::GPIO_LINE_FLAG_OPEN_SOURCE),
+            ) {
+                (true, false) => Drive::OpenDrain,
+                (false, true) => Drive::OpenSource,
+                _ => Drive::PushPull,
+            };
+            let name = safe_get_str(&gpio_line_info.name)?.into();
+            let consumer = safe_get_str(&gpio_line_info.consumer)?.into();
+
+            Ok(LineInfo {
+                direction,
+                active,
+                edge,
+                used,
+                bias,
+                drive,
+                name,
+                consumer,
+            })
+        }
     }
 
     /// Request the GPIO chip to configure the lines passed as argument as outputs. Calling this
     /// operation is a precondition to being able to set the state of the GPIO lines. All the lines
     /// passed in one request must share the output mode and the active state. The state of lines configured
     /// as outputs can also be read using the *get_line_value* method.
-    pub fn request_line_values_output(
+    pub fn request_output(
         &self,
-        line_offset: &Vec<u32>,
+        lines: impl AsRef<[LineId]>,
         drive: Drive,
         active: Active,
         label: &str,
-    ) -> io::Result<LineValue> {
-        let mut gpio_handle_request = raw::GpioHandleRequest::default();
+    ) -> io::Result<Outputs> {
+        let line_offsets = lines.as_ref();
 
-        gpio_handle_request.lines = line_offset.len() as u32;
+        #[cfg(not(feature = "v2"))]
+        let fd = {
+            let mut request = raw::v1::GpioHandleRequest::default();
 
-        for index in 0..line_offset.len() {
-            gpio_handle_request.line_offsets[index] = line_offset[index];
-        }
+            check_len(line_offsets, &request.line_offsets)?;
 
-        gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_OUTPUT;
+            request.lines = line_offsets.len() as _;
 
-        match drive {
-            Drive::OpenDrain => gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_OPEN_DRAIN,
-            Drive::OpenSource => gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_OPEN_SOURCE,
-            _ => (),
+            request.line_offsets.copy_from_slice(line_offsets);
+
+            request.flags |= raw::v1::GPIOHANDLE_REQUEST_OUTPUT;
+
+            match drive {
+                Drive::OpenDrain => request.flags |= raw::v1::GPIOHANDLE_REQUEST_OPEN_DRAIN,
+                Drive::OpenSource => request.flags |= raw::v1::GPIOHANDLE_REQUEST_OPEN_SOURCE,
+                _ => (),
+            };
+
+            if matches!(active, Active::Low) {
+                request.flags |= raw::v1::GPIOHANDLE_REQUEST_ACTIVE_LOW;
+            }
+
+            safe_set_str(&mut request.consumer_label, label)?;
+
+            unsafe_call!(raw::v1::gpio_get_line_handle(
+                self.file.as_raw_fd(),
+                &mut request,
+            ))?;
+
+            request.fd
         };
 
-        if matches!(active, Active::Low) {
-            gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_ACTIVE_LOW;
-        }
+        #[cfg(feature = "v2")]
+        let fd = {
+            let mut request = raw::v2::GpioLineRequest::default();
 
-        if label.len() > 32 {
-            return Err(io::Error::from(io::ErrorKind::InvalidInput));
-        }
+            check_len(line_offsets, &request.offsets)?;
 
-        gpio_handle_request.consumer_label[..label.len()].copy_from_slice(label.as_bytes());
+            request.num_lines = line_offsets.len() as _;
 
-        unsafe_call!(raw::gpio_get_line_handle(
-            self.fd.as_raw_fd(),
-            &mut gpio_handle_request,
-        ))?;
+            request.offsets.copy_from_slice(line_offsets);
 
-        Ok(LineValue {
-            chip_name: self.name.clone(),
-            direction: Direction::Output,
-            offset: line_offset.clone(),
-            fd: unsafe { File::from_raw_fd(gpio_handle_request.fd) },
-        })
+            request.config.flags |= raw::v2::GPIO_LINE_FLAG_OUTPUT;
+
+            match drive {
+                Drive::OpenDrain => request.config.flags |= raw::v2::GPIO_LINE_FLAG_OPEN_DRAIN,
+                Drive::OpenSource => request.config.flags |= raw::v2::GPIO_LINE_FLAG_OPEN_SOURCE,
+                _ => (),
+            };
+
+            if matches!(active, Active::Low) {
+                request.config.flags |= raw::v2::GPIO_LINE_FLAG_ACTIVE_LOW;
+            }
+
+            safe_set_str(&mut request.consumer, label)?;
+
+            unsafe_call!(raw::v2::gpio_get_line(self.file.as_raw_fd(), &mut request))?;
+
+            request.fd
+        };
+
+        Ok(Outputs(LineValues::new(&self.name, line_offsets, fd)))
     }
 
     /// Request the GPIO chip to configure the lines passed as argument as inputs. Calling this
     /// operation is a precondition to being able to read the state of the GPIO lines.
-    pub fn request_line_values_input(
+    pub fn request_input(
         &self,
-        line_offset: &Vec<u32>,
+        lines: impl AsRef<[LineId]>,
         bias: Option<Bias>,
         active: Active,
         label: &str,
-    ) -> io::Result<LineValue> {
-        let mut gpio_handle_request = raw::GpioHandleRequest::default();
+    ) -> io::Result<Inputs> {
+        let line_offsets = lines.as_ref();
 
-        for index in 0..line_offset.len() {
-            gpio_handle_request.line_offsets[index] = line_offset[index];
-        }
+        #[cfg(not(feature = "v2"))]
+        let fd = {
+            let mut request = raw::v1::GpioHandleRequest::default();
 
-        gpio_handle_request.lines = line_offset.len() as u32;
+            check_len(line_offsets, &request.line_offsets)?;
 
-        gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_INPUT;
+            request.lines = line_offsets.len() as _;
 
-        if let Some(bias) = bias {
-            match bias {
-                Bias::PullUp => gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_BIAS_PULL_UP,
-                Bias::PullDown => {
-                    gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_BIAS_PULL_DOWN
+            request.line_offsets.copy_from_slice(line_offsets);
+
+            request.flags |= raw::v1::GPIOHANDLE_REQUEST_INPUT;
+
+            if let Some(bias) = bias {
+                match bias {
+                    Bias::PullUp => request.flags |= raw::v1::GPIOHANDLE_REQUEST_BIAS_PULL_UP,
+                    Bias::PullDown => request.flags |= raw::v1::GPIOHANDLE_REQUEST_BIAS_PULL_DOWN,
+                    Bias::Disable => request.flags |= raw::v1::GPIOHANDLE_REQUEST_BIAS_DISABLE,
                 }
-                Bias::Disable => gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_BIAS_DISABLE,
             }
-        }
 
-        if matches!(active, Active::Low) {
-            gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_ACTIVE_LOW;
-        }
+            if matches!(active, Active::Low) {
+                request.flags |= raw::v1::GPIOHANDLE_REQUEST_ACTIVE_LOW;
+            }
 
-        if label.len() > 32 {
-            return Err(io::Error::from(io::ErrorKind::InvalidInput));
-        }
+            safe_set_str(&mut request.consumer_label, label)?;
 
-        gpio_handle_request.consumer_label[..label.len()].copy_from_slice(label.as_bytes());
+            unsafe_call!(raw::v1::gpio_get_line_handle(
+                self.file.as_raw_fd(),
+                &mut request,
+            ))?;
 
-        unsafe_call!(raw::gpio_get_line_handle(
-            self.fd.as_raw_fd(),
-            &mut gpio_handle_request,
-        ))?;
+            request.fd
+        };
 
-        Ok(LineValue {
-            chip_name: self.name.clone(),
-            direction: Direction::Input,
-            offset: line_offset.clone(),
-            fd: unsafe { File::from_raw_fd(gpio_handle_request.fd) },
-        })
+        #[cfg(feature = "v2")]
+        let fd = {
+            let mut request = raw::v2::GpioLineRequest::default();
+
+            check_len(line_offsets, &request.offsets)?;
+
+            request.num_lines = line_offsets.len() as _;
+
+            request.offsets.copy_from_slice(line_offsets);
+
+            request.config.flags |= raw::v2::GPIO_LINE_FLAG_INPUT;
+
+            if let Some(bias) = bias {
+                match bias {
+                    Bias::PullUp => request.config.flags |= raw::v2::GPIO_LINE_FLAG_BIAS_PULL_UP,
+                    Bias::PullDown => {
+                        request.config.flags |= raw::v2::GPIO_LINE_FLAG_BIAS_PULL_DOWN
+                    }
+                    Bias::Disable => request.config.flags |= raw::v2::GPIO_LINE_FLAG_BIAS_DISABLED,
+                }
+            }
+
+            if matches!(active, Active::Low) {
+                request.config.flags |= raw::v2::GPIO_LINE_FLAG_ACTIVE_LOW;
+            }
+
+            safe_set_str(&mut request.consumer, label)?;
+
+            unsafe_call!(raw::v2::gpio_get_line(self.file.as_raw_fd(), &mut request))?;
+
+            request.fd
+        };
+
+        Ok(Inputs(LineValues::new(&self.name, line_offsets, fd)))
     }
 
     /// Get the GPIO chip name.
@@ -556,7 +748,7 @@ impl Chip {
     }
 
     /// Get the total number of lines of the GPIO chip.
-    pub fn num_lines(&self) -> &u32 {
-        &self.num_lines
+    pub fn num_lines(&self) -> LineId {
+        self.num_lines
     }
 }
