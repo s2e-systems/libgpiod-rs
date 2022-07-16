@@ -451,7 +451,7 @@ impl Chip {
         &self,
         line_offset: &Vec<u32>,
         drive: Drive,
-        active_low: bool,
+        active: Active,
         label: &str,
     ) -> io::Result<LineValue> {
         let mut gpio_handle_request = raw::GpioHandleRequest::default();
@@ -470,7 +470,7 @@ impl Chip {
             _ => (),
         };
 
-        if active_low {
+        if matches!(active, Active::Low) {
             gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_ACTIVE_LOW;
         }
 
@@ -499,7 +499,7 @@ impl Chip {
         &self,
         line_offset: &Vec<u32>,
         bias: Option<Bias>,
-        active_low: bool,
+        active: Active,
         label: &str,
     ) -> io::Result<LineValue> {
         let mut gpio_handle_request = raw::GpioHandleRequest::default();
@@ -522,7 +522,7 @@ impl Chip {
             }
         }
 
-        if active_low {
+        if matches!(active, Active::Low) {
             gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_ACTIVE_LOW;
         }
 
