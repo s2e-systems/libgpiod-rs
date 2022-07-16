@@ -8,6 +8,8 @@
 //! Since all functionality is dependent on Linux function calls, this crate only compiles for Linux systems.
 //!
 
+mod raw;
+
 use std::{
     fmt,
     fs::{symlink_metadata, File, OpenOptions},
@@ -26,144 +28,6 @@ macro_rules! unsafe_call {
         unsafe { $res }.map_err(io::Error::from)
     };
 }
-
-mod gpio_ioctl {
-    use nix::{ioctl_read, ioctl_readwrite};
-
-    // All the structs used for ioctl must be represented in C otherwise weird memory mappings happen.
-    //
-    // The implementations provided inside this module are also a copy of gpio.h which is normally
-    // used to access the gpio in linux. If that header file changes, this module will likely be broken
-    // due to mismatched data types or GPIO command codes.
-    #[derive(Debug, Default)]
-    #[repr(C)]
-    pub struct GpioChipInfo {
-        pub name: [u8; 32],
-        pub label: [u8; 32],
-        pub lines: u32,
-    }
-
-    #[derive(Debug, Default)]
-    #[repr(C)]
-    pub struct GpioLineInfo {
-        pub line_offset: u32,
-        pub flags: u32,
-        pub name: [u8; 32],
-        pub consumer: [u8; 32],
-    }
-
-    const GPIOHANDLES_MAX: usize = 64;
-
-    #[repr(C)]
-    pub struct GpioHandleRequest {
-        pub line_offsets: [u32; GPIOHANDLES_MAX],
-        pub flags: u32,
-        pub default_values: [u8; GPIOHANDLES_MAX],
-        pub consumer_label: [u8; 32],
-        pub lines: u32,
-        pub fd: i32,
-    }
-
-    impl Default for GpioHandleRequest {
-        fn default() -> Self {
-            Self {
-                line_offsets: [0; GPIOHANDLES_MAX],
-                flags: 0,
-                default_values: [0; GPIOHANDLES_MAX],
-                consumer_label: [0; 32],
-                lines: 0,
-                fd: 0,
-            }
-        }
-    }
-
-    #[derive(Debug, Default)]
-    #[repr(C)]
-    pub struct GpioEventRequest {
-        pub lineoffset: u32,
-        pub handleflags: u32,
-        pub eventflags: u32,
-        pub consumer_label: [u8; 32],
-        pub fd: i32,
-    }
-
-    #[repr(C)]
-    pub struct GpioHandleData {
-        pub values: [u8; GPIOHANDLES_MAX],
-    }
-
-    impl Default for GpioHandleData {
-        fn default() -> Self {
-            Self {
-                values: [0; GPIOHANDLES_MAX],
-            }
-        }
-    }
-
-    const GPIO_MAGIC_NUMBER: u8 = 0xB4;
-    const GPIO_GET_CHIPINFO_IOCTL_COMMAND_NUMBER: u8 = 0x01;
-    const GPIO_GET_LINEINFO_IOCTL_COMMAND_NUMBER: u8 = 0x02;
-    const GPIO_GET_LINEHANDLE_IOCTL_COMMAND_NUMBER: u8 = 0x03;
-    const GPIO_GET_LINEEVENT_IOCTL_COMMAND_NUMBER: u8 = 0x04;
-    const GPIO_GET_LINE_VALUES_IOCTL_COMMAND_NUMBER: u8 = 0x08;
-    const GPIO_SET_LINE_VALUES_IOCTL_COMMAND_NUMBER: u8 = 0x09;
-
-    ioctl_read!(
-        gpio_get_chip_info,
-        GPIO_MAGIC_NUMBER,
-        GPIO_GET_CHIPINFO_IOCTL_COMMAND_NUMBER,
-        GpioChipInfo
-    );
-    ioctl_readwrite!(
-        gpio_get_line_info,
-        GPIO_MAGIC_NUMBER,
-        GPIO_GET_LINEINFO_IOCTL_COMMAND_NUMBER,
-        GpioLineInfo
-    );
-    ioctl_readwrite!(
-        gpio_get_line_handle,
-        GPIO_MAGIC_NUMBER,
-        GPIO_GET_LINEHANDLE_IOCTL_COMMAND_NUMBER,
-        GpioHandleRequest
-    );
-    ioctl_readwrite!(
-        gpio_get_line_event,
-        GPIO_MAGIC_NUMBER,
-        GPIO_GET_LINEEVENT_IOCTL_COMMAND_NUMBER,
-        GpioEventRequest
-    );
-    ioctl_readwrite!(
-        gpio_get_line_values,
-        GPIO_MAGIC_NUMBER,
-        GPIO_GET_LINE_VALUES_IOCTL_COMMAND_NUMBER,
-        GpioHandleData
-    );
-    ioctl_readwrite!(
-        gpio_set_line_values,
-        GPIO_MAGIC_NUMBER,
-        GPIO_SET_LINE_VALUES_IOCTL_COMMAND_NUMBER,
-        GpioHandleData
-    );
-}
-
-// **************** Flags for line state **************
-const GPIOLINE_FLAG_KERNEL: u32 = 1 << 0;
-const GPIOLINE_FLAG_IS_OUT: u32 = 1 << 1;
-const GPIOLINE_FLAG_ACTIVE_LOW: u32 = 1 << 2;
-const GPIOLINE_FLAG_OPEN_DRAIN: u32 = 1 << 3;
-const GPIOLINE_FLAG_OPEN_SOURCE: u32 = 1 << 4;
-const GPIOLINE_FLAG_BIAS_PULL_UP: u32 = 1 << 5;
-const GPIOLINE_FLAG_BIAS_PULL_DOWN: u32 = 1 << 6;
-
-// **************** Flags for line requests ***************
-const GPIOHANDLE_REQUEST_INPUT: u32 = 1 << 0;
-const GPIOHANDLE_REQUEST_OUTPUT: u32 = 1 << 1;
-const GPIOHANDLE_REQUEST_ACTIVE_LOW: u32 = 1 << 2;
-const GPIOHANDLE_REQUEST_OPEN_DRAIN: u32 = 1 << 3;
-const GPIOHANDLE_REQUEST_OPEN_SOURCE: u32 = 1 << 4;
-const GPIOHANDLE_REQUEST_BIAS_PULL_UP: u32 = 1 << 5;
-const GPIOHANDLE_REQUEST_BIAS_PULL_DOWN: u32 = 1 << 6;
-const GPIOHANDLE_REQUEST_BIAS_DISABLE: u32 = 1 << 7;
 
 /// Represents a Linux chardev GPIO chip interface.
 /// It can be used to get information about the chip and lines and
@@ -307,12 +171,9 @@ impl GpioLineValue {
     /// must match exactly, otherwise the correct file descriptor needed to access the
     /// lines can not be retrieved and the function will fail.
     pub fn get_line_value(&self) -> io::Result<Vec<u8>> {
-        let mut data = gpio_ioctl::GpioHandleData::default();
+        let mut data = raw::GpioHandleData::default();
 
-        unsafe_call!(gpio_ioctl::gpio_get_line_values(
-            self.fd.as_raw_fd(),
-            &mut data
-        ))?;
+        unsafe_call!(raw::gpio_get_line_values(self.fd.as_raw_fd(), &mut data))?;
 
         let mut output_data: Vec<u8> = Vec::with_capacity(self.offset.len());
 
@@ -328,16 +189,13 @@ impl GpioLineValue {
     /// functions must match exactly, otherwise the correct file descriptor needed to access the
     /// lines can not be retrieved and the function will fail.
     pub fn set_line_value(&self, value: u8) -> io::Result<()> {
-        let mut data = gpio_ioctl::GpioHandleData::default();
+        let mut data = raw::GpioHandleData::default();
 
         for line_index in 0..self.offset.len() {
             data.values[line_index] = value;
         }
 
-        unsafe_call!(gpio_ioctl::gpio_set_line_values(
-            self.fd.as_raw_fd(),
-            &mut data
-        ))?;
+        unsafe_call!(raw::gpio_set_line_values(self.fd.as_raw_fd(), &mut data))?;
 
         Ok(())
     }
@@ -439,9 +297,9 @@ impl GpioChip {
 
         GpioChip::is_gpiochip_cdev(path)?;
 
-        let mut gpio_chip_info = gpio_ioctl::GpioChipInfo::default();
+        let mut gpio_chip_info = raw::GpioChipInfo::default();
 
-        unsafe_call!(gpio_ioctl::gpio_get_chip_info(
+        unsafe_call!(raw::gpio_get_chip_info(
             dev_file.as_raw_fd(),
             &mut gpio_chip_info
         ))?;
@@ -519,33 +377,37 @@ impl GpioChip {
 
     /// Request the info of a specific GPIO line.
     pub fn get_line_info(&self, line_number: &u32) -> io::Result<GpioLineInfo> {
-        let mut gpio_line_info = gpio_ioctl::GpioLineInfo::default();
+        let mut gpio_line_info = raw::GpioLineInfo::default();
 
         gpio_line_info.line_offset = *line_number;
 
-        unsafe_call!(gpio_ioctl::gpio_get_line_info(
+        unsafe_call!(raw::gpio_get_line_info(
             self.fd.as_raw_fd(),
             &mut gpio_line_info,
         ))?;
 
-        let direction = if gpio_line_info.flags & GPIOLINE_FLAG_IS_OUT == GPIOLINE_FLAG_IS_OUT {
-            LineDirection::Output
-        } else {
-            LineDirection::Input
-        };
-
-        let active_state =
-            if gpio_line_info.flags & GPIOLINE_FLAG_ACTIVE_LOW == GPIOLINE_FLAG_ACTIVE_LOW {
-                LineActiveState::ActiveLow
+        let direction =
+            if gpio_line_info.flags & raw::GPIOLINE_FLAG_IS_OUT == raw::GPIOLINE_FLAG_IS_OUT {
+                LineDirection::Output
             } else {
-                LineActiveState::ActiveHigh
+                LineDirection::Input
             };
 
-        let used = (gpio_line_info.flags & GPIOLINE_FLAG_KERNEL) == GPIOLINE_FLAG_KERNEL;
+        let active_state = if gpio_line_info.flags & raw::GPIOLINE_FLAG_ACTIVE_LOW
+            == raw::GPIOLINE_FLAG_ACTIVE_LOW
+        {
+            LineActiveState::ActiveLow
+        } else {
+            LineActiveState::ActiveHigh
+        };
+
+        let used = (gpio_line_info.flags & raw::GPIOLINE_FLAG_KERNEL) == raw::GPIOLINE_FLAG_KERNEL;
 
         let input_bias = match (
-            (gpio_line_info.flags & GPIOLINE_FLAG_BIAS_PULL_UP) == GPIOLINE_FLAG_BIAS_PULL_UP,
-            (gpio_line_info.flags & GPIOLINE_FLAG_BIAS_PULL_DOWN) == GPIOLINE_FLAG_BIAS_PULL_DOWN,
+            (gpio_line_info.flags & raw::GPIOLINE_FLAG_BIAS_PULL_UP)
+                == raw::GPIOLINE_FLAG_BIAS_PULL_UP,
+            (gpio_line_info.flags & raw::GPIOLINE_FLAG_BIAS_PULL_DOWN)
+                == raw::GPIOLINE_FLAG_BIAS_PULL_DOWN,
         ) {
             (true, false) => InputBias::PullUp,
             (false, true) => InputBias::PullDown,
@@ -553,8 +415,9 @@ impl GpioChip {
         };
 
         let output_mode = match (
-            (gpio_line_info.flags & GPIOLINE_FLAG_OPEN_DRAIN) == GPIOLINE_FLAG_OPEN_DRAIN,
-            (gpio_line_info.flags & GPIOLINE_FLAG_OPEN_SOURCE) == GPIOLINE_FLAG_OPEN_SOURCE,
+            (gpio_line_info.flags & raw::GPIOLINE_FLAG_OPEN_DRAIN) == raw::GPIOLINE_FLAG_OPEN_DRAIN,
+            (gpio_line_info.flags & raw::GPIOLINE_FLAG_OPEN_SOURCE)
+                == raw::GPIOLINE_FLAG_OPEN_SOURCE,
         ) {
             (true, false) => OutputMode::OpenDrain,
             (false, true) => OutputMode::OpenSource,
@@ -591,7 +454,7 @@ impl GpioChip {
         active_low: bool,
         label: &str,
     ) -> io::Result<GpioLineValue> {
-        let mut gpio_handle_request = gpio_ioctl::GpioHandleRequest::default();
+        let mut gpio_handle_request = raw::GpioHandleRequest::default();
 
         gpio_handle_request.lines = line_offset.len() as u32;
 
@@ -599,16 +462,20 @@ impl GpioChip {
             gpio_handle_request.line_offsets[index] = line_offset[index];
         }
 
-        gpio_handle_request.flags |= GPIOHANDLE_REQUEST_OUTPUT;
+        gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_OUTPUT;
 
         match output_mode {
-            OutputMode::OpenDrain => gpio_handle_request.flags |= GPIOHANDLE_REQUEST_OPEN_DRAIN,
-            OutputMode::OpenSource => gpio_handle_request.flags |= GPIOHANDLE_REQUEST_OPEN_SOURCE,
+            OutputMode::OpenDrain => {
+                gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_OPEN_DRAIN
+            }
+            OutputMode::OpenSource => {
+                gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_OPEN_SOURCE
+            }
             _ => (),
         };
 
         if active_low {
-            gpio_handle_request.flags |= GPIOHANDLE_REQUEST_ACTIVE_LOW;
+            gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_ACTIVE_LOW;
         }
 
         if label.len() > 32 {
@@ -617,7 +484,7 @@ impl GpioChip {
 
         gpio_handle_request.consumer_label[..label.len()].copy_from_slice(label.as_bytes());
 
-        unsafe_call!(gpio_ioctl::gpio_get_line_handle(
+        unsafe_call!(raw::gpio_get_line_handle(
             self.fd.as_raw_fd(),
             &mut gpio_handle_request,
         ))?;
@@ -639,7 +506,7 @@ impl GpioChip {
         active_low: bool,
         label: &str,
     ) -> io::Result<GpioLineValue> {
-        let mut gpio_handle_request = gpio_ioctl::GpioHandleRequest::default();
+        let mut gpio_handle_request = raw::GpioHandleRequest::default();
 
         for index in 0..line_offset.len() {
             gpio_handle_request.line_offsets[index] = line_offset[index];
@@ -647,20 +514,24 @@ impl GpioChip {
 
         gpio_handle_request.lines = line_offset.len() as u32;
 
-        gpio_handle_request.flags |= GPIOHANDLE_REQUEST_INPUT;
+        gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_INPUT;
 
         if let Some(input_bias) = input_bias {
             match input_bias {
-                InputBias::PullUp => gpio_handle_request.flags |= GPIOHANDLE_REQUEST_BIAS_PULL_UP,
-                InputBias::PullDown => {
-                    gpio_handle_request.flags |= GPIOHANDLE_REQUEST_BIAS_PULL_DOWN
+                InputBias::PullUp => {
+                    gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_BIAS_PULL_UP
                 }
-                InputBias::Disable => gpio_handle_request.flags |= GPIOHANDLE_REQUEST_BIAS_DISABLE,
+                InputBias::PullDown => {
+                    gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_BIAS_PULL_DOWN
+                }
+                InputBias::Disable => {
+                    gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_BIAS_DISABLE
+                }
             }
         }
 
         if active_low {
-            gpio_handle_request.flags |= GPIOHANDLE_REQUEST_ACTIVE_LOW;
+            gpio_handle_request.flags |= raw::GPIOHANDLE_REQUEST_ACTIVE_LOW;
         }
 
         if label.len() > 32 {
@@ -669,7 +540,7 @@ impl GpioChip {
 
         gpio_handle_request.consumer_label[..label.len()].copy_from_slice(label.as_bytes());
 
-        unsafe_call!(gpio_ioctl::gpio_get_line_handle(
+        unsafe_call!(raw::gpio_get_line_handle(
             self.fd.as_raw_fd(),
             &mut gpio_handle_request,
         ))?;
