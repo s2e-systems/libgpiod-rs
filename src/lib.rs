@@ -256,8 +256,7 @@ pub struct GpioLineInfo {
     direction: LineDirection,
     active_state: LineActiveState,
     used: bool,
-    open_drain: bool,
-    open_source: bool,
+    output_mode: OutputMode,
     name: String,
     consumer: String,
 }
@@ -334,10 +333,8 @@ impl fmt::Display for GpioLineInfo {
             write!(f, "\t {}", self.consumer)?;
         }
         write!(f, "\t {}", self.active_state())?;
-        if self.open_drain {
-            write!(f, "\t Open drain")?;
-        } else if self.open_source {
-            write!(f, "\t Open source")?;
+        if !matches!(self.output_mode, OutputMode::PushPull) {
+            write!(f, "\t {}", self.output_mode)?;
         }
 
         Ok(())
@@ -354,12 +351,8 @@ impl GpioLineInfo {
     }
 
     /// Get output mode of line
-    pub fn output_mode(&self) -> OutputMode {
-        match (self.open_drain, self.open_source) {
-            (true, false) => OutputMode::OpenDrain,
-            (false, true) => OutputMode::OpenSource,
-            _ => OutputMode::PushPull,
-        }
+    pub fn output_mode(&self) -> &OutputMode {
+        &self.output_mode
     }
 
     pub fn is_used(&self) -> &bool {
@@ -367,11 +360,11 @@ impl GpioLineInfo {
     }
 
     pub fn is_open_drain(&self) -> &bool {
-        &self.open_drain
+        matches!(self.output_mode, OutputMode::OpenDrain)
     }
 
     pub fn is_open_source(&self) -> &bool {
-        &self.open_source
+        matches!(self.output_mode, OutputMode::OpenSource)
     }
 
     pub fn name(&self) -> &str {
@@ -493,10 +486,14 @@ impl GpioChip {
             };
 
         let used = (gpio_line_info.flags & GPIOLINE_FLAG_KERNEL) == GPIOLINE_FLAG_KERNEL;
-        let open_drain =
-            (gpio_line_info.flags & GPIOLINE_FLAG_OPEN_DRAIN) == GPIOLINE_FLAG_OPEN_DRAIN;
-        let open_source =
-            (gpio_line_info.flags & GPIOLINE_FLAG_OPEN_SOURCE) == GPIOLINE_FLAG_OPEN_SOURCE;
+        let output_mode = match (
+            (gpio_line_info.flags & GPIOLINE_FLAG_OPEN_DRAIN) == GPIOLINE_FLAG_OPEN_DRAIN,
+            (gpio_line_info.flags & GPIOLINE_FLAG_OPEN_SOURCE) == GPIOLINE_FLAG_OPEN_SOURCE,
+        ) {
+            (true, false) => OutputMode::OpenDrain,
+            (false, true) => OutputMode::OpenSource,
+            _ => OutputMode::PushPull,
+        };
         let name = String::from_utf8(gpio_line_info.name.to_vec())
             .unwrap()
             .trim_end_matches(char::from(0))
@@ -510,8 +507,7 @@ impl GpioChip {
             direction,
             active_state,
             used,
-            open_drain,
-            open_source,
+            output_mode,
             name,
             consumer,
         })
