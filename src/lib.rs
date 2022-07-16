@@ -188,16 +188,22 @@ pub enum LineDirection {
     Output,
 }
 
-impl fmt::Display for LineDirection {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl AsRef<str> for LineDirection {
+    fn as_ref(&self) -> &str {
         match self {
-            LineDirection::Input => write!(f, "Input"),
-            LineDirection::Output => write!(f, "Output"),
+            Self::Input => "Input",
+            Self::Output => "Output",
         }
     }
 }
 
-/// Represents the active state condition of a line. Possible values are *Active High* or *Active Low*.
+impl fmt::Display for LineDirection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_ref().fmt(f)
+    }
+}
+
+/// Represents the active state condition of a line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum LineActiveState {
@@ -205,16 +211,22 @@ pub enum LineActiveState {
     ActiveHigh,
 }
 
-impl fmt::Display for LineActiveState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl AsRef<str> for LineActiveState {
+    fn as_ref(&self) -> &str {
         match self {
-            LineActiveState::ActiveLow => write!(f, "Active low"),
-            LineActiveState::ActiveHigh => write!(f, "Active high"),
+            Self::ActiveLow => "Active low",
+            Self::ActiveHigh => "Active high",
         }
     }
 }
 
-/// Represents the output mode of a GPIO line. Possible values are *Open Drain* and *Open Source*.
+impl fmt::Display for LineActiveState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_ref().fmt(f)
+    }
+}
+
+/// Represents the output mode of a GPIO line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum OutputMode {
@@ -223,13 +235,19 @@ pub enum OutputMode {
     OpenSource,
 }
 
+impl AsRef<str> for OutputMode {
+    fn as_ref(&self) -> &str {
+        match self {
+            OutputMode::PushPull => "Push pull",
+            OutputMode::OpenDrain => "Open drain",
+            OutputMode::OpenSource => "Open source",
+        }
+    }
+}
+
 impl fmt::Display for OutputMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            OutputMode::PushPull => write!(f, "Push pull"),
-            OutputMode::OpenDrain => write!(f, "Open drain"),
-            OutputMode::OpenSource => write!(f, "Open source"),
-        }
+        self.as_ref().fmt(f)
     }
 }
 
