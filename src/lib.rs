@@ -586,8 +586,10 @@ impl Chip {
     pub fn request_output(
         &self,
         lines: impl AsRef<[LineId]>,
-        drive: Drive,
         active: Active,
+        edge: EdgeDetect,
+        bias: Bias,
+        drive: Drive,
         label: &str,
     ) -> io::Result<Outputs> {
         let line_offsets = lines.as_ref();
@@ -604,14 +606,22 @@ impl Chip {
 
             request.flags |= raw::v1::GPIOHANDLE_REQUEST_OUTPUT;
 
+            if matches!(active, Active::Low) {
+                request.flags |= raw::v1::GPIOHANDLE_REQUEST_ACTIVE_LOW;
+            }
+
+            // TODO: edge detection
+
+            match bias {
+                Bias::PullUp => request.flags |= raw::v1::GPIOHANDLE_REQUEST_BIAS_PULL_UP,
+                Bias::PullDown => request.flags |= raw::v1::GPIOHANDLE_REQUEST_BIAS_PULL_DOWN,
+                Bias::Disable => request.flags |= raw::v1::GPIOHANDLE_REQUEST_BIAS_DISABLE,
+            }
+
             match drive {
                 Drive::OpenDrain => request.flags |= raw::v1::GPIOHANDLE_REQUEST_OPEN_DRAIN,
                 Drive::OpenSource => request.flags |= raw::v1::GPIOHANDLE_REQUEST_OPEN_SOURCE,
                 _ => (),
-            };
-
-            if matches!(active, Active::Low) {
-                request.flags |= raw::v1::GPIOHANDLE_REQUEST_ACTIVE_LOW;
             }
 
             safe_set_str(&mut request.consumer_label, label)?;
@@ -636,15 +646,28 @@ impl Chip {
 
             request.config.flags |= raw::v2::GPIO_LINE_FLAG_OUTPUT;
 
+            if matches!(active, Active::Low) {
+                request.config.flags |= raw::v2::GPIO_LINE_FLAG_ACTIVE_LOW;
+            }
+
+            match edge {
+                EdgeDetect::Rising => request.config.flags |= raw::v2::GPIO_LINE_FLAG_EDGE_RISING,
+                EdgeDetect::Falling => request.config.flags |= raw::v2::GPIO_LINE_FLAG_EDGE_FALLING,
+                EdgeDetect::Both => request.config.flags |= raw::v2::GPIO_LINE_FLAG_EDGE_BOTH,
+                _ => {}
+            }
+
+            match bias {
+                Bias::PullUp => request.config.flags |= raw::v2::GPIO_LINE_FLAG_BIAS_PULL_UP,
+                Bias::PullDown => request.config.flags |= raw::v2::GPIO_LINE_FLAG_BIAS_PULL_DOWN,
+                Bias::Disable => request.config.flags |= raw::v2::GPIO_LINE_FLAG_BIAS_DISABLED,
+            }
+
             match drive {
                 Drive::OpenDrain => request.config.flags |= raw::v2::GPIO_LINE_FLAG_OPEN_DRAIN,
                 Drive::OpenSource => request.config.flags |= raw::v2::GPIO_LINE_FLAG_OPEN_SOURCE,
                 _ => (),
             };
-
-            if matches!(active, Active::Low) {
-                request.config.flags |= raw::v2::GPIO_LINE_FLAG_ACTIVE_LOW;
-            }
 
             safe_set_str(&mut request.consumer, label)?;
 
@@ -661,8 +684,9 @@ impl Chip {
     pub fn request_input(
         &self,
         lines: impl AsRef<[LineId]>,
-        bias: Option<Bias>,
         active: Active,
+        edge: EdgeDetect,
+        bias: Bias,
         label: &str,
     ) -> io::Result<Inputs> {
         let line_offsets = lines.as_ref();
@@ -679,16 +703,16 @@ impl Chip {
 
             request.flags |= raw::v1::GPIOHANDLE_REQUEST_INPUT;
 
-            if let Some(bias) = bias {
-                match bias {
-                    Bias::PullUp => request.flags |= raw::v1::GPIOHANDLE_REQUEST_BIAS_PULL_UP,
-                    Bias::PullDown => request.flags |= raw::v1::GPIOHANDLE_REQUEST_BIAS_PULL_DOWN,
-                    Bias::Disable => request.flags |= raw::v1::GPIOHANDLE_REQUEST_BIAS_DISABLE,
-                }
-            }
-
             if matches!(active, Active::Low) {
                 request.flags |= raw::v1::GPIOHANDLE_REQUEST_ACTIVE_LOW;
+            }
+
+            // TODO: edge detection
+
+            match bias {
+                Bias::PullUp => request.flags |= raw::v1::GPIOHANDLE_REQUEST_BIAS_PULL_UP,
+                Bias::PullDown => request.flags |= raw::v1::GPIOHANDLE_REQUEST_BIAS_PULL_DOWN,
+                Bias::Disable => request.flags |= raw::v1::GPIOHANDLE_REQUEST_BIAS_DISABLE,
             }
 
             safe_set_str(&mut request.consumer_label, label)?;
@@ -713,18 +737,21 @@ impl Chip {
 
             request.config.flags |= raw::v2::GPIO_LINE_FLAG_INPUT;
 
-            if let Some(bias) = bias {
-                match bias {
-                    Bias::PullUp => request.config.flags |= raw::v2::GPIO_LINE_FLAG_BIAS_PULL_UP,
-                    Bias::PullDown => {
-                        request.config.flags |= raw::v2::GPIO_LINE_FLAG_BIAS_PULL_DOWN
-                    }
-                    Bias::Disable => request.config.flags |= raw::v2::GPIO_LINE_FLAG_BIAS_DISABLED,
-                }
-            }
-
             if matches!(active, Active::Low) {
                 request.config.flags |= raw::v2::GPIO_LINE_FLAG_ACTIVE_LOW;
+            }
+
+            match edge {
+                EdgeDetect::Rising => request.config.flags |= raw::v2::GPIO_LINE_FLAG_EDGE_RISING,
+                EdgeDetect::Falling => request.config.flags |= raw::v2::GPIO_LINE_FLAG_EDGE_FALLING,
+                EdgeDetect::Both => request.config.flags |= raw::v2::GPIO_LINE_FLAG_EDGE_BOTH,
+                _ => {}
+            }
+
+            match bias {
+                Bias::PullUp => request.config.flags |= raw::v2::GPIO_LINE_FLAG_BIAS_PULL_UP,
+                Bias::PullDown => request.config.flags |= raw::v2::GPIO_LINE_FLAG_BIAS_PULL_DOWN,
+                Bias::Disable => request.config.flags |= raw::v2::GPIO_LINE_FLAG_BIAS_DISABLED,
             }
 
             safe_set_str(&mut request.consumer, label)?;
