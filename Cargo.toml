@@ -12,6 +12,16 @@ version = "0.24"
 default-features = false
 features = ["ioctl"]
 
+[dependencies.tokio]
+version = "1"
+default-features = false
+features = ["fs", "io-util"]
+optional = true
+
+[dependencies.async-std]
+version = "1"
+optional = true
+
 [features]
 default = ["v2"]
 v2 = []

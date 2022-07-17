@@ -7,6 +7,8 @@
 //!
 //! Since all functionality is dependent on Linux function calls, this crate only compiles for Linux systems.
 //!
+#[cfg(all(feature = "tokio", feature = "async-std"))]
+compile_error!("Both 'tokio' and 'async-std' features cannot be used simultaneously.");
 
 mod raw;
 mod types;
@@ -173,6 +175,40 @@ impl LineValues {
             self.make_event(event)
         }
     }
+
+    #[cfg(any(feature = "tokio", feature = "async-std"))]
+    async fn read_event_async(&mut self) -> io::Result<Event> {
+        #[cfg(not(feature = "v2"))]
+        {
+            todo!();
+        }
+
+        #[cfg(feature = "v2")]
+        {
+            #[cfg(feature = "tokio")]
+            use tokio::io::AsyncReadExt;
+
+            #[cfg(feature = "async-std")]
+            use async_std::io::ReadExt;
+
+            let mut event = raw::v2::GpioLineEvent::default();
+
+            #[cfg(feature = "tokio")]
+            let mut file = unsafe { tokio::fs::File::from_raw_fd(self.file.as_raw_fd()) };
+
+            #[cfg(feature = "async-std")]
+            let mut file = unsafe { async_std::fs::File::from_raw_fd(self.file.as_raw_fd()) };
+
+            let res = file.read(event.as_mut()).await;
+
+            // bypass close syscall
+            core::mem::forget(file);
+
+            res?;
+
+            self.make_event(event)
+        }
+    }
 }
 
 /// Represents the input values.
@@ -207,6 +243,15 @@ impl Inputs {
     /// Read events synchronously
     pub fn read_event(&mut self) -> io::Result<Event> {
         self.0.read_event()
+    }
+    /// Read GPIO events asynchronously
+    #[cfg_attr(
+        feature = "doc-cfg",
+        doc(cfg(any(feature = "tokio", feature = "async-std")))
+    )]
+    #[cfg(any(feature = "tokio", feature = "async-std"))]
+    pub async fn read_event_async(&mut self) -> io::Result<Event> {
+        self.0.read_event_async().await
     }
 }
 
@@ -250,6 +295,16 @@ impl Outputs {
     /// Read events synchronously
     pub fn read_event(&mut self) -> io::Result<Event> {
         self.0.read_event()
+    }
+
+    /// Read GPIO events asynchronously
+    #[cfg_attr(
+        feature = "doc-cfg",
+        doc(cfg(any(feature = "tokio", feature = "async-std")))
+    )]
+    #[cfg(any(feature = "tokio", feature = "async-std"))]
+    pub async fn read_event_async(&mut self) -> io::Result<Event> {
+        self.0.read_event_async().await
     }
 }
 
