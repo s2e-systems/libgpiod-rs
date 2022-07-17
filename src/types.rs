@@ -10,7 +10,9 @@ pub type BitId = u8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(C)]
 pub struct Values {
+    /// Logic values of lines
     pub bits: u64,
+    /// Mask of lines to get or set
     pub mask: u64,
 }
 
@@ -43,7 +45,9 @@ values_conv! {
 }
 
 impl Values {
-    /// Get value of bit
+    /// Get the value of specific bit
+    ///
+    /// If bit is out of range (0..64) or not masked then None will be returned.
     pub fn get(&self, bit: BitId) -> Option<bool> {
         if bit > 64 {
             return None;
@@ -58,7 +62,9 @@ impl Values {
         Some(self.bits & mask != 0)
     }
 
-    /// Set value of bit
+    /// Set the value of specific bit and mask it
+    ///
+    /// If bit if out of range (0..64) then nothing will be set.
     pub fn set(&mut self, bit: BitId, val: bool) {
         if bit > 64 {
             return;
@@ -76,11 +82,13 @@ impl Values {
     }
 }
 
-/// Represents the direction of a GPIO line. Possible values are *Input* and *Output*.
+/// Direction of a GPIO line
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Direction {
+    /// Line acts as input (default)
     Input,
+    /// Line acts as output
     Output,
 }
 
@@ -105,11 +113,18 @@ impl Default for Direction {
     }
 }
 
-/// Represents the active state condition of a line.
+/// Active state condition of a line
+///
+/// If active state of line is **high** then physical and logical levels is same.
+/// Otherwise if it is **low** then physical level will be inverted from logical.
+///
+/// Also this may be treated as polarity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Active {
+    /// Active level is low
     Low,
+    /// Active level is high (default)
     High,
 }
 
@@ -134,11 +149,13 @@ impl Default for Active {
     }
 }
 
-/// Represents the detectected edge of a GPIO line.
+/// Signal edge or level transition of a GPIO line
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Edge {
+    /// Rising edge detected
     Rising,
+    /// Falling edge detected
     Falling,
 }
 
@@ -157,21 +174,28 @@ impl fmt::Display for Edge {
     }
 }
 
-/// Represent input event.
+/// Signal edge detection event
 #[derive(Clone, Copy)]
 pub struct Event {
+    /// GPIO line where edge detected
     pub line: BitId,
+    /// Detected edge or level transition
     pub edge: Edge,
+    /// Time when edge actually detected
     pub time: SystemTime,
 }
 
-/// Represents the edge detection of a GPIO line.
+/// Edge detection setting for GPIO line
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum EdgeDetect {
+    /// Detection disabled (default)
     Disable,
+    /// Detect rising edge only
     Rising,
+    /// Detect falling edge only
     Falling,
+    /// Detect both rising and falling edges
     Both,
 }
 
@@ -198,12 +222,18 @@ impl Default for EdgeDetect {
     }
 }
 
-/// Represents the input bias of a GPIO line.
+/// Input bias of a GPIO line
+///
+/// Sometimes GPIO lines shall be pulled to up (power rail) or down (ground)
+/// through resistor to avoid floating level on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Bias {
+    /// Disabled bias (default)
     Disable,
+    /// Pull line up
     PullUp,
+    /// Pull line down
     PullDown,
 }
 
@@ -229,12 +259,17 @@ impl Default for Bias {
     }
 }
 
-/// Represents the output mode of a GPIO line.
+/// Output drive mode of a GPIO line
+///
+/// Usually GPIO lines configured as push-pull but sometimes it required to drive via open drain or source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Drive {
+    /// Drive push-pull (default)
     PushPull,
+    /// Drive with open-drain
     OpenDrain,
+    /// Drive with open-source
     OpenSource,
 }
 

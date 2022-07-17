@@ -1,12 +1,6 @@
-//! Crate for interfacing with Linux GPIO chardev module
-//!
-//! This crate provides an interface to the Linux GPIO using the chardev module.
-//! This interface involves calling *ioctl* funcions which are unsafe and require some unintuitive variable
-//! mapping. To ease this process, this crate provides a GpioChip struct which encapsulates the
-//! interface in safe Rust functions. The functionality provided here is highly inspired by libgpiod.
-//!
-//! Since all functionality is dependent on Linux function calls, this crate only compiles for Linux systems.
-//!
+#![doc = include_str!("../README.md")]
+#![cfg_attr(feature = "doc-cfg", feature(doc_cfg))]
+
 #[cfg(all(feature = "tokio", feature = "async-std"))]
 compile_error!("Both 'tokio' and 'async-std' features cannot be used simultaneously.");
 
@@ -163,7 +157,8 @@ impl LineValues {
 
             self.file.read(event.as_mut())?;
 
-            self.make_event(line, event)
+            todo!();
+            //self.make_event(line, event)
         }
 
         #[cfg(feature = "v2")]
@@ -211,7 +206,9 @@ impl LineValues {
     }
 }
 
-/// Represents the input values.
+/// The interface for getting the values of GPIO lines configured for input
+///
+/// Use [Chip::request_input] to configure specific GPIO lines for input.
 pub struct Inputs(LineValues);
 
 impl AsRef<File> for Inputs {
@@ -221,29 +218,29 @@ impl AsRef<File> for Inputs {
 }
 
 impl Inputs {
-    /// Get line chip name
+    /// Get associated chip name
     pub fn chip_name(&self) -> &str {
         &self.0.chip_name
     }
 
-    /// Get line offsets
+    /// Get offsets of requested lines
     pub fn lines(&self) -> &[LineId] {
         &self.0.offset
     }
 
-    /// Get the value of GPIO lines. The values can only be read if the lines have previously been
-    /// requested as either inputs, using the *request_line_values_input* method, or outputs using
-    /// the *request_line_values_output*. The input vector in both the *request* and get functions
-    /// must match exactly, otherwise the correct file descriptor needed to access the
-    /// lines can not be retrieved and the function will fail.
+    /// Get the value of GPIO lines
+    ///
+    /// The values can only be read if the lines have previously been requested as either inputs
+    /// using the [Chip::request_input] method, or outputs using the [Chip::request_output].
     pub fn get_values<T: From<Values>>(&self) -> io::Result<T> {
         self.0.get_values()
     }
 
-    /// Read events synchronously
+    /// Read GPIO events synchronously
     pub fn read_event(&mut self) -> io::Result<Event> {
         self.0.read_event()
     }
+
     /// Read GPIO events asynchronously
     #[cfg_attr(
         feature = "doc-cfg",
@@ -255,7 +252,12 @@ impl Inputs {
     }
 }
 
-/// Represents the output values.
+/// The interface for setting the values of GPIO lines configured for output
+///
+/// Use [Chip::request_output] to configure specific GPIO lines for output.
+///
+/// The values also can be read.
+/// Specifically this may be useful to get actual value when lines driven as open drain or source.
 pub struct Outputs(LineValues);
 
 impl AsRef<File> for Outputs {
@@ -265,34 +267,33 @@ impl AsRef<File> for Outputs {
 }
 
 impl Outputs {
-    /// Get line chip name
+    /// Get associated chip name
     pub fn chip_name(&self) -> &str {
         &self.0.chip_name
     }
 
-    /// Get line offsets
+    /// Get offsets of requested lines
     pub fn lines(&self) -> &[LineId] {
         &self.0.offset
     }
 
-    /// Get the value of GPIO lines. The values can only be read if the lines have previously been
-    /// requested as either inputs, using the *request_line_values_input* method, or outputs using
-    /// the *request_line_values_output*. The input vector in both the *request* and get functions
-    /// must match exactly, otherwise the correct file descriptor needed to access the
-    /// lines can not be retrieved and the function will fail.
+    /// Get the value of GPIO lines
+    ///
+    /// The values can only be read if the lines have previously been requested as either inputs
+    /// using the [Chip::request_input] method, or outputs using the [Chip::request_output].
     pub fn get_values<T: From<Values>>(&self) -> io::Result<T> {
         self.0.get_values()
     }
 
-    /// Set the value of GPIO lines. The value can only be set if the lines have previously been
-    /// requested as outputs using the *request_line_values_output*. The input vector in both
-    /// functions must match exactly, otherwise the correct file descriptor needed to access the
-    /// lines can not be retrieved and the function will fail.
+    /// Set the value of GPIO lines
+    ///
+    /// The value can only be set if the lines have previously been requested as outputs
+    /// using the [Chip::request_output].
     pub fn set_values(&self, values: impl Into<Values>) -> io::Result<()> {
         self.0.set_values(values)
     }
 
-    /// Read events synchronously
+    /// Read GPIO events synchronously
     pub fn read_event(&mut self) -> io::Result<Event> {
         self.0.read_event()
     }
@@ -308,7 +309,9 @@ impl Outputs {
     }
 }
 
-/// Represents the information of a specific GPIO line. Can only be obtained through the Chip interface.
+/// The information of a specific GPIO line
+///
+/// Can be obtained through the [Chip::line_info].
 pub struct LineInfo {
     direction: Direction,
     active: Active,
@@ -406,9 +409,10 @@ impl LineInfo {
     }
 }
 
-/// Represents a Linux chardev GPIO chip interface.
+/// A Linux chardev GPIO chip interface
+///
 /// It can be used to get information about the chip and lines and
-/// to request GPIO lines that can be used as output or input.
+/// to request GPIO lines that can be used as inputs or outputs.
 pub struct Chip {
     name: String,
     label: String,
@@ -427,7 +431,7 @@ impl fmt::Display for Chip {
 }
 
 impl Chip {
-    /// Create a new GPIO chip interface.
+    /// Create a new GPIO chip interface using path
     pub fn new(path: impl AsRef<Path>) -> io::Result<Chip> {
         let dev = OpenOptions::new().read(true).write(true).open(&path)?;
 
@@ -634,10 +638,11 @@ impl Chip {
         }
     }
 
-    /// Request the GPIO chip to configure the lines passed as argument as outputs. Calling this
-    /// operation is a precondition to being able to set the state of the GPIO lines. All the lines
-    /// passed in one request must share the output mode and the active state. The state of lines configured
-    /// as outputs can also be read using the *get_line_value* method.
+    /// Request the GPIO chip to configure the lines passed as argument as outputs
+    ///
+    /// Calling this operation is a precondition to being able to set the state of the GPIO lines.
+    /// All the lines passed in one request must share the output mode and the active state.
+    /// The state of lines configured as outputs can also be read using the [Outputs::get_values] method.
     pub fn request_output(
         &self,
         lines: impl AsRef<[LineId]>,
@@ -734,8 +739,9 @@ impl Chip {
         Ok(Outputs(LineValues::new(&self.name, line_offsets, fd)))
     }
 
-    /// Request the GPIO chip to configure the lines passed as argument as inputs. Calling this
-    /// operation is a precondition to being able to read the state of the GPIO lines.
+    /// Request the GPIO chip to configure the lines passed as argument as inputs
+    ///
+    /// Calling this operation is a precondition to being able to read the state of the GPIO lines.
     pub fn request_input(
         &self,
         lines: impl AsRef<[LineId]>,
@@ -819,17 +825,17 @@ impl Chip {
         Ok(Inputs(LineValues::new(&self.name, line_offsets, fd)))
     }
 
-    /// Get the GPIO chip name.
+    /// Get the GPIO chip name
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// Get the GPIO chip label.
+    /// Get the GPIO chip label
     pub fn label(&self) -> &str {
         &self.label
     }
 
-    /// Get the total number of lines of the GPIO chip.
+    /// Get the total number of lines of the GPIO chip
     pub fn num_lines(&self) -> LineId {
         self.num_lines
     }

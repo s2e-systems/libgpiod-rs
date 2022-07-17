@@ -25,3 +25,7 @@ optional = true
 [features]
 default = ["v2"]
 v2 = []
+doc-cfg = []
+
+[package.metadata.docs.rs]
+features = ["doc-cfg", "v2", "tokio"]
